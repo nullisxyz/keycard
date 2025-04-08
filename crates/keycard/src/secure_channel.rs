@@ -16,7 +16,7 @@ use tracing::{debug, trace, warn};
 use zeroize::Zeroize;
 
 use crate::PairOk;
-use crate::crypto::{ApduMeta, Challenge, Cryptogram};
+use crate::crypto::{ApduMeta, Challenge, Cryptogram, KeycardScp};
 use crate::{
     Error,
     commands::mutually_authenticate::MutuallyAuthenticateCommand,
@@ -33,37 +33,37 @@ use crate::{
 #[zeroize(drop)]
 pub struct Keys {
     /// Encryption key
-    enc: Key<crate::crypto::KeycardScp>,
+    enc: Key<KeycardScp>,
     /// MAC key
-    mac: Key<crate::crypto::KeycardScp>,
+    mac: Key<KeycardScp>,
 }
 
 impl Keys {
     /// Create a new key set with the specified encryption and MAC keys.
-    fn new(enc: Key<crate::crypto::KeycardScp>, mac: Key<crate::crypto::KeycardScp>) -> Self {
+    fn new(enc: Key<KeycardScp>, mac: Key<KeycardScp>) -> Self {
         Self { enc, mac }
     }
 
     /// Get the encryption key
-    fn enc(&self) -> &Key<crate::crypto::KeycardScp> {
+    fn enc(&self) -> &Key<KeycardScp> {
         &self.enc
     }
 
     /// Get the MAC key
-    fn mac(&self) -> &Key<crate::crypto::KeycardScp> {
+    fn mac(&self) -> &Key<KeycardScp> {
         &self.mac
     }
 }
 
 /// Represents a secure communication channel with a Keycard
 #[derive(Clone)]
-pub struct KeycardScp {
+pub struct KeycardSCP {
     /// Current state of the secure channel
     security_level: SecurityLevel,
     /// Session keys derived from ECDH
     keys: Option<Keys>,
     /// IV
-    iv: Option<Iv<crate::crypto::KeycardScp>>,
+    iv: Option<Iv<KeycardScp>>,
     /// Card public key
     card_public_key: Option<PublicKey>,
     /// Host ephemeral key pair
@@ -72,7 +72,7 @@ pub struct KeycardScp {
     pairing_info: Option<crate::types::PairingInfo>,
 }
 
-impl fmt::Debug for KeycardScp {
+impl fmt::Debug for KeycardSCP {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeycardScp")
             .field("level", &self.security_level)
@@ -82,13 +82,13 @@ impl fmt::Debug for KeycardScp {
     }
 }
 
-impl Default for KeycardScp {
+impl Default for KeycardSCP {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl KeycardScp {
+impl KeycardSCP {
     /// Create a new secure channel instance
     pub fn new() -> Self {
         Self {
@@ -201,9 +201,9 @@ impl KeycardScp {
             PairOk::Success { data } => {
                 let index = data[0];
                 let key = {
-                    let mut hasher = sha2::Sha256::new();
-                    sha2::Digest::update(&mut hasher, &shared_secret);
-                    sha2::Digest::update(&mut hasher, &data[1..]);
+                    let mut hasher = Sha256::new();
+                    Digest::update(&mut hasher, &shared_secret);
+                    Digest::update(&mut hasher, &data[1..]);
                     hasher.finalize()
                 };
                 (index, key)
@@ -226,7 +226,7 @@ impl KeycardScp {
     fn establish(
         &mut self,
         card_data: &[u8; 48],
-        pairing_key: &Key<crate::crypto::KeycardScp>,
+        pairing_key: &Key<KeycardScp>,
     ) -> crate::Result<()> {
         debug!("Establishing secure channel with card data");
 
@@ -421,7 +421,7 @@ impl KeycardScp {
     }
 }
 
-impl CommandProcessor for KeycardScp {
+impl CommandProcessor for KeycardSCP {
     fn do_process_command(
         &mut self,
         command: &Command,
@@ -464,7 +464,7 @@ impl CommandProcessor for KeycardScp {
     }
 }
 
-impl SecureChannel for KeycardScp {
+impl SecureChannel for KeycardSCP {
     fn is_established(&self) -> bool {
         self.is_open()
     }
@@ -509,7 +509,7 @@ impl nexum_apdu_core::processor::secure::SecureChannelProvider for KeycardSecure
         transport: &mut dyn CardTransport,
     ) -> nexum_apdu_core::Result<Box<dyn CommandProcessor>> {
         // Create a new secure channel
-        let mut secure_channel = KeycardScp::new();
+        let mut secure_channel = KeycardSCP::new();
 
         // Set the pairing information
         secure_channel.set_pairing_info(crate::types::PairingInfo {
@@ -554,7 +554,7 @@ mod tests {
         let iv = hex::decode("627E64358FA9BDCDAD4442BD8006E0A5").unwrap();
 
         // Create KeycardScp with the same state as in the Go test
-        let mut scp = KeycardScp::new();
+        let mut scp = KeycardSCP::new();
         scp.security_level = SecurityLevel::encrypted();
         scp.keys = Some(Keys::new(
             *Key::<crate::crypto::KeycardScp>::from_slice(&enc_key),

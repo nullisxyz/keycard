@@ -18,7 +18,7 @@ pub use commands::select::*;
 pub use commands::sign::*;
 pub use error::{Error, Result};
 pub use secrets::Secrets;
-pub use secure_channel::KeycardScp;
+pub use secure_channel::KeycardSCP;
 pub use types::{ApplicationInfo, ApplicationStatus, PairingInfo};
 
 pub use constants::*;

@@ -1,4 +1,4 @@
-// mod application;
+mod application;
 mod commands;
 mod constants;
 mod crypto;
@@ -8,7 +8,7 @@ mod secure_channel;
 mod session;
 mod types;
 
-// pub use application::Keycard;
+pub use application::Keycard;
 pub use commands::generate_key::*;
 pub use commands::init::*;
 pub use commands::mutually_authenticate::*;

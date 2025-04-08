@@ -4,10 +4,7 @@ use nexum_apdu_core::prelude::SecurityLevel;
 use nexum_apdu_core::processor::SecureProtocolError;
 use nexum_apdu_core::processor::{CommandProcessor, error::ProcessorError, secure::SecureChannel};
 use nexum_apdu_core::transport::CardTransport;
-use nexum_apdu_core::{
-    ApduCommand, ApduResponse, Command, Executor, Response, ResponseAwareExecutor,
-    SecureChannelExecutor,
-};
+use nexum_apdu_core::{ApduCommand, ApduResponse, Command, Executor, Response};
 use rand_v8::{RngCore, thread_rng};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -21,13 +18,15 @@ use crate::{
     commands::pair::PairCommand,
     crypto::{calculate_cryptogram, decrypt_data, encrypt_data, generate_pairing_token},
 };
-use crate::{PairOk, PairingInfo};
+use crate::{PairOk, PairingInfo, VerifyPinCommand};
 
 /// Represents a secure communication channel with a Keycard
 #[derive(Clone)]
 pub struct KeycardSCP {
     /// Session containing keys and state
     session: Session,
+    /// Security level of the secure channel
+    security_level: SecurityLevel,
 }
 
 impl fmt::Debug for KeycardSCP {
@@ -39,12 +38,15 @@ impl fmt::Debug for KeycardSCP {
 impl KeycardSCP {
     /// Create a new secure channel instance
     pub fn new(session: Session) -> Self {
-        Self { session }
+        Self {
+            session,
+            security_level: SecurityLevel::encrypted(),
+        }
     }
 
     /// Get the channel state
     pub const fn security_level(&self) -> &SecurityLevel {
-        &self.session.security_level()
+        &self.security_level
     }
 
     /// Check if the secure channel is open
@@ -54,9 +56,10 @@ impl KeycardSCP {
     }
 
     /// Pair with the card using the provided pairing password
-    pub fn pair<E>(executor: &mut E, pairing_pass: &str) -> crate::Result<PairingInfo>
+    pub fn pair<E, F>(executor: &mut E, pairing_pass: F) -> crate::Result<PairingInfo>
     where
-        E: Executor + ResponseAwareExecutor + SecureChannelExecutor,
+        E: Executor,
+        F: FnOnce() -> String,
     {
         debug!("Starting pairing process with pairing password");
 
@@ -83,7 +86,7 @@ impl KeycardSCP {
         };
 
         // Verify the card cryptogram
-        let shared_secret = generate_pairing_token(pairing_pass);
+        let shared_secret = generate_pairing_token(pairing_pass().as_str());
         if card_cryptogram != calculate_cryptogram(&card_challenge, &shared_secret) {
             return Err(crate::Error::SecureProtocol(SecureProtocolError::Protocol(
                 "Card cryptogram verification failed",
@@ -119,6 +122,26 @@ impl KeycardSCP {
         debug!("Pairing successful with index {}", index);
 
         Ok(PairingInfo { key, index })
+    }
+
+    pub fn verify_pin<E, F>(&mut self, executor: &mut E, pin: F) -> crate::Result<()>
+    where
+        E: Executor,
+        F: FnOnce() -> String,
+    {
+        // Create the command
+        let cmd = VerifyPinCommand::with_pin(pin().as_str());
+
+        // Execute the command
+        let _ = executor
+            .execute(&cmd)?
+            .to_result()
+            .map_err(|e| Error::Pin(e))?;
+
+        // At this point, it is guaranteed that the PIN was verified successfully.
+        self.security_level = SecurityLevel::authenticated_encrypted();
+
+        Ok(())
     }
 
     /// Perform mutual authentication to complete secure channel establishment

@@ -6,10 +6,7 @@
 use bytes::Bytes;
 use cipher::{Iv, Key};
 use k256::{PublicKey, SecretKey};
-use nexum_apdu_core::{
-    ApduCommand, ApduResponse, CardTransport, prelude::SecurityLevel,
-    processor::SecureProtocolError,
-};
+use nexum_apdu_core::{ApduCommand, ApduResponse, CardTransport, processor::SecureProtocolError};
 use rand_v8::thread_rng;
 use zeroize::Zeroize;
 
@@ -54,8 +51,6 @@ pub struct Session {
     keys: Keys,
     /// IV
     iv: Iv<KeycardScp>,
-    /// Current security level of the session.
-    security_level: SecurityLevel,
 }
 
 impl Session {
@@ -100,7 +95,6 @@ impl Session {
         let (enc_key, mac_key) = derive_session_keys(shared_secret, &pairing_info.key, challenge);
 
         Ok(Self {
-            security_level: SecurityLevel::encrypted(),
             keys: Keys::new(enc_key, mac_key),
             iv,
         })
@@ -112,14 +106,9 @@ impl Session {
         iv: &Iv<KeycardScp>,
     ) -> Self {
         Self {
-            security_level: SecurityLevel::encrypted(),
             keys: Keys::new(enc_key.clone(), mac_key.clone()),
             iv: iv.clone(),
         }
-    }
-
-    pub const fn security_level(&self) -> &SecurityLevel {
-        &self.security_level
     }
 
     pub const fn keys(&self) -> &Keys {

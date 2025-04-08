@@ -3,17 +3,17 @@
 /// This module provides the main Keycard application interface, which
 /// encapsulates all the functionality for managing Keycards.
 use nexum_apdu_core::prelude::{
-    Executor, ResponseAwareExecutor, SecureChannelExecutor, SecurityLevel,
+    Executor, ResponseAwareExecutor, SecureChannelExecutor, SecureChannelProvider, SecurityLevel,
 };
 use nexum_apdu_globalplatform::{SelectCommand, SelectResponse};
 use tracing::{debug, warn};
 
 use crate::commands::init::{InitCommand, InitResponse};
 use crate::error::{Error, Result};
-use crate::secure_channel::{KeycardScp, create_secure_channel_provider};
+use crate::secure_channel::{KeycardSCP, KeycardSecureChannelProvider};
 
 use crate::types::PairingInfo;
-use crate::{KEYCARD_AID, Secrets, SelectSuccessResponse, VerifyPinResponse, keycard_instance_aid};
+use crate::{KEYCARD_AID, Secrets, SelectSuccessResponse, keycard_instance_aid};
 
 /// Keycard card management application
 #[allow(missing_debug_implementations)]
@@ -23,8 +23,10 @@ where
 {
     /// Card executor
     executor: E,
+    /// Secure channel provider
+    secure_channel_provider: KeycardSecureChannelProvider,
     /// Secure channel
-    secure_channel: KeycardScp,
+    secure_channel: Option<KeycardSCP>,
 }
 
 impl<E> Keycard<E>
@@ -32,10 +34,11 @@ where
     E: Executor + ResponseAwareExecutor + SecureChannelExecutor,
 {
     /// Create a new Keycard instance
-    pub fn new(executor: E) -> Self {
+    pub fn new(executor: E, secure_channel_provider: KeycardSecureChannelProvider) -> Self {
         Self {
             executor,
-            secure_channel: KeycardScp::new(),
+            secure_channel_provider,
+            secure_channel: None,
         }
     }
 
@@ -63,7 +66,7 @@ where
             let cmd = InitCommand::with_card_pubkey_and_secrets(
                 pre.ok_or(Error::SecureChannelNotSupported)?,
                 secrets,
-            )?;
+            );
 
             return self.executor.execute(&cmd).map_err(Into::into);
         }
@@ -72,8 +75,11 @@ where
     }
 
     /// Pair with the card
-    pub fn pair(&mut self, pairing_pass: &str) -> Result<()> {
-        self.secure_channel.pair(&mut self.executor, pairing_pass)
+    pub fn pair<F>(&mut self, pairing_pass: F) -> Result<PairingInfo>
+    where
+        F: FnOnce() -> String,
+    {
+        KeycardSCP::pair(&mut self.executor, pairing_pass)
     }
 
     /// Open secure channel using current pairing information
@@ -105,41 +111,6 @@ where
         Ok(())
     }
 
-    /// Verify PIN
-    pub fn verify_pin(&mut self, pin: &str) -> Result<()> {
-        // Create the command
-        let cmd = crate::commands::pin::VerifyPinCommand::with_pin(pin);
-
-        // Execute the command (this will go through secure channel if open)
-        let response = self.executor.execute(&cmd)?;
-
-        match response {
-            crate::commands::pin::VerifyPinResponse::Success => {
-                // Update secure channel state to PIN verified
-                self.secure_channel
-                    .set_state(SecureChannelState::PinVerified);
-                debug!("PIN verified successfully");
-                Ok(())
-            }
-            crate::commands::pin::VerifyPinResponse::WrongPin { sw2 } => {
-                let remaining_attempts = sw2 & 0x0F;
-                warn!("Wrong PIN. Remaining attempts: {}", remaining_attempts);
-                Err(Error::WrongPin(remaining_attempts))
-            }
-            crate::commands::pin::VerifyPinResponse::PinBlocked => {
-                warn!("PIN is blocked");
-                Err(Error::PinVerificationRequired)
-            }
-            crate::commands::pin::VerifyPinResponse::OtherError { sw1, sw2 } => {
-                warn!(
-                    "Unexpected error during PIN verification: {:02X}{:02X}",
-                    sw1, sw2
-                );
-                Err(Error::Unknown)
-            }
-        }
-    }
-
     /// Execute a command securely
     pub fn execute_secure<C, R>(&mut self, command: &C) -> nexum_apdu_core::Result<R>
     where
@@ -147,7 +118,7 @@ where
         R: TryFrom<nexum_apdu_core::Bytes, Error = nexum_apdu_core::Error>,
     {
         let cmd_bytes = command.to_bytes();
-        let response_bytes = self.executor.transmit(&cmd_bytes).map_err(Into::into)?;
+        let response_bytes = self.executor.transmit(&cmd_bytes)?;
 
         R::try_from(response_bytes)
     }

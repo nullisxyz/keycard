@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::VerifyPinError;
+
 /// Result type for Keycard operations
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -49,8 +51,8 @@ pub enum Error {
     #[error("PIN verification required")]
     PinVerificationRequired,
 
-    #[error("Wrong PIN. Remaining attempts: {0}")]
-    WrongPin(u8),
+    #[error(transparent)]
+    Pin(#[from] VerifyPinError),
 
     #[error("Pairing failed")]
     PairingFailed,

@@ -5,6 +5,7 @@ mod crypto;
 mod error;
 mod secrets;
 mod secure_channel;
+mod session;
 mod types;
 
 // pub use application::Keycard;
@@ -16,6 +17,7 @@ pub use commands::pair::*;
 pub use commands::pin::*;
 pub use commands::select::*;
 pub use commands::sign::*;
+pub use crypto::Challenge;
 pub use error::{Error, Result};
 pub use secrets::Secrets;
 pub use secure_channel::KeycardSCP;

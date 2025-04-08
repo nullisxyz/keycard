@@ -1,3 +1,4 @@
+use crate::Challenge;
 use nexum_apdu_globalplatform::constants::status;
 use nexum_apdu_macros::apdu_pair;
 
@@ -12,7 +13,7 @@ apdu_pair! {
 
             builders {
                 /// Create a PAIR for first stage with parameters
-                pub fn with_first_stage(challenge: &[u8; 32]) -> Self {
+                pub fn with_first_stage(challenge: &Challenge) -> Self {
                     Self::new(0x00, 0x00).with_data(challenge.to_vec())
                 }
                 /// Create a PAIR for final stage with parameters

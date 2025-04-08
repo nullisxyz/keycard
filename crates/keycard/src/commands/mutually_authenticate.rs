@@ -1,3 +1,4 @@
+use crate::Challenge;
 use nexum_apdu_globalplatform::constants::status;
 use nexum_apdu_macros::apdu_pair;
 
@@ -12,7 +13,7 @@ apdu_pair! {
 
             builders {
                 /// Create a MUTUALLY AUTHENTICATE command with challenge
-                pub fn with_challenge(challenge: &[u8; 32]) -> Self {
+                pub fn with_challenge(challenge: &Challenge) -> Self {
                     Self::new(0x00, 0x00).with_data(challenge.to_vec()).with_le(0)
                 }
             }

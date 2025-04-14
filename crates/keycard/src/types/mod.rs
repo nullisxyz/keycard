@@ -15,12 +15,14 @@ pub use pairing_info::PairingInfo;
 pub use signature::*;
 pub use version::Version;
 
-pub(crate) fn get_primitive_value(tag: &Tag, tlv: &Tlv) -> Result<Vec<u8>, anyhow::Error> {
+use crate::Error;
+
+pub(crate) fn get_primitive_value(tag: &Tag, tlv: &Tlv) -> Result<Vec<u8>, Error> {
     if tag != tlv.tag() {
-        return Err(anyhow::Error::msg("Invalid tag"));
+        return Err(Error::InvalidData("Invalid tag"));
     }
     match tlv.value() {
         Value::Primitive(bytes) => Ok(bytes.to_vec()),
-        _ => Err(anyhow::Error::msg("Invalid value type")),
+        _ => Err(Error::InvalidData("Invalid value type")),
     }
 }

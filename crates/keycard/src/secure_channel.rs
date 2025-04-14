@@ -1,24 +1,18 @@
 use bytes::{Bytes, BytesMut};
 use k256::PublicKey;
-use nexum_apdu_core::prelude::SecurityLevel;
-use nexum_apdu_core::processor::SecureProtocolError;
-use nexum_apdu_core::processor::{CommandProcessor, error::ProcessorError, secure::SecureChannel};
-use nexum_apdu_core::transport::CardTransport;
-use nexum_apdu_core::{ApduCommand, ApduResponse, Command, Executor, Response};
+use nexum_apdu_core::{prelude::*, processor::SecureProtocolError, response::error::ResponseError};
 use rand_v8::{RngCore, thread_rng};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use tracing::{debug, trace, warn};
 
-use crate::crypto::{ApduMeta, Challenge, Cryptogram};
-use crate::session::Session;
 use crate::{
-    Error,
-    commands::mutually_authenticate::MutuallyAuthenticateCommand,
-    commands::pair::PairCommand,
+    Error, PairingInfo,
+    commands::{MutuallyAuthenticateCommand, PairCommand, PairOk, VerifyPinCommand},
+    crypto::{ApduMeta, Challenge},
     crypto::{calculate_cryptogram, decrypt_data, encrypt_data, generate_pairing_token},
+    session::Session,
 };
-use crate::{PairOk, PairingInfo, VerifyPinCommand};
 
 /// Represents a secure communication channel with a Keycard
 #[derive(Clone)]
@@ -56,7 +50,7 @@ impl KeycardSCP {
     }
 
     /// Pair with the card using the provided pairing password
-    pub fn pair<E, F>(executor: &mut E, pairing_pass: F) -> crate::Result<PairingInfo>
+    pub fn pair<E, F>(executor: &mut E, pairing_pass: F) -> Result<PairingInfo, E::Error>
     where
         E: Executor,
         F: FnOnce() -> String,
@@ -71,52 +65,46 @@ impl KeycardSCP {
         let cmd = PairCommand::with_first_stage(&challenge);
 
         // Send the command
-        let response = executor
-            .execute(&cmd)
-            .map_err(crate::Error::from)?
-            .to_result()
-            .map_err(nexum_apdu_core::Error::from)?;
+        let response = executor.execute(&cmd)?;
 
         let (card_cryptogram, card_challenge) = match response {
-            PairOk::Success { data } => {
-                let card_cryptogram = Cryptogram::clone_from_slice(&data[..32]);
-                let card_challenge = Challenge::clone_from_slice(&data[32..]);
-                (card_cryptogram, card_challenge)
-            }
+            PairOk::FirstStageSuccess {
+                cryptogram: card_cryptogram,
+                challenge: card_challenge,
+            } => (card_cryptogram, card_challenge),
+            _ => unreachable!("Executed first stage, therefore this should not be reachable"),
         };
 
         // Verify the card cryptogram
         let shared_secret = generate_pairing_token(pairing_pass().as_str());
-        if card_cryptogram != calculate_cryptogram(&card_challenge, &shared_secret) {
-            return Err(crate::Error::SecureProtocol(SecureProtocolError::Protocol(
-                "Card cryptogram verification failed",
-            )));
+        if card_cryptogram != calculate_cryptogram(&shared_secret, &challenge) {
+            return Err(
+                SecureProtocolError::Protocol("Card cryptogram verification failed").into(),
+            );
         }
 
         // Calculate client cryptogram
         let client_cryptogram = calculate_cryptogram(&shared_secret, &card_challenge);
 
         // Create PAIR (final step) command
-        let cmd = PairCommand::with_final_stage(&client_cryptogram.try_into().unwrap());
+        let cmd = PairCommand::with_final_stage(&client_cryptogram);
 
         // Send the command
-        let response = executor
-            .execute(&cmd)
-            .map_err(crate::Error::from)?
-            .to_result()
-            .map_err(nexum_apdu_core::Error::from)?;
-
-        let (index, key) = match response {
-            PairOk::Success { data } => {
-                let index = data[0];
+        let (index, key) = match executor.execute(&cmd) {
+            Ok(PairOk::FinalStageSuccess {
+                pairing_index: index,
+                salt,
+            }) => {
                 let key = {
                     let mut hasher = Sha256::new();
                     Digest::update(&mut hasher, &shared_secret);
-                    Digest::update(&mut hasher, &data[1..]);
+                    Digest::update(&mut hasher, &salt);
                     hasher.finalize()
                 };
                 (index, key)
             }
+            Ok(PairOk::FirstStageSuccess { .. }) => unreachable!("Executed final stage"),
+            Err(err) => return Err(err.into()),
         };
 
         debug!("Pairing successful with index {}", index);
@@ -124,7 +112,7 @@ impl KeycardSCP {
         Ok(PairingInfo { key, index })
     }
 
-    pub fn verify_pin<E, F>(&mut self, executor: &mut E, pin: F) -> crate::Result<()>
+    pub fn verify_pin<E, F>(&mut self, executor: &mut E, pin: F) -> Result<(), E::Error>
     where
         E: Executor,
         F: FnOnce() -> String,
@@ -133,10 +121,7 @@ impl KeycardSCP {
         let cmd = VerifyPinCommand::with_pin(pin().as_str());
 
         // Execute the command
-        let _ = executor
-            .execute(&cmd)?
-            .to_result()
-            .map_err(|e| Error::Pin(e))?;
+        let _ = executor.execute(&cmd)?;
 
         // At this point, it is guaranteed that the PIN was verified successfully.
         self.security_level = SecurityLevel::authenticated_encrypted();
@@ -145,7 +130,10 @@ impl KeycardSCP {
     }
 
     /// Perform mutual authentication to complete secure channel establishment
-    fn mutually_authenticate(&mut self, transport: &mut dyn CardTransport) -> crate::Result<()> {
+    fn mutually_authenticate(
+        &mut self,
+        transport: &mut dyn CardTransport,
+    ) -> Result<(), SecureProtocolError> {
         // Generate a random challenge
         let mut challenge = Challenge::default();
         thread_rng().fill_bytes(&mut challenge);
@@ -157,11 +145,15 @@ impl KeycardSCP {
         let encrypted_cmd = self.encrypt_command(cmd.to_command());
 
         // Send through transport
-        let response_bytes = transport.transmit_raw(&encrypted_cmd.to_bytes())?;
+        let response_bytes = transport
+            .transmit_raw(&encrypted_cmd.to_bytes())
+            .map_err(ResponseError::from)?;
         let response = nexum_apdu_core::Response::from_bytes(&response_bytes)?;
 
         if !response.is_success() || self.decrypt_response(response).is_err() {
-            return Err(crate::Error::MutualAuthenticationFailed);
+            return Err(SecureProtocolError::AuthenticationFailed(
+                "Mutual authentication failed",
+            ));
         }
 
         debug!("Mutual authentication successful");
@@ -210,50 +202,58 @@ impl KeycardSCP {
     }
 
     /// Decrypt APDU response data from the secure channel
-    fn decrypt_response(&mut self, response: Response) -> Result<Vec<u8>, Error> {
-        let response_data = response.payload().to_vec();
+    fn decrypt_response(&mut self, response: Response) -> Result<Bytes, Error> {
+        match response.payload() {
+            Some(payload) => {
+                let response_data = payload.to_vec();
 
-        // Need at least a MAC (16 bytes)
-        if response_data.len() < 16 {
-            warn!(
-                "Response data too short for secure channel: {}",
-                response_data.len()
-            );
-            return Err(Error::Response(
-                nexum_apdu_core::response::error::ResponseError::BufferTooSmall,
-            ));
+                // Need at least a MAC (16 bytes)
+                if response_data.len() < 16 {
+                    warn!(
+                        "Response data too short for secure channel: {}",
+                        response_data.len()
+                    );
+                    return Err(Error::Response(ResponseError::BufferTooSmall));
+                }
+
+                // Split into MAC and encrypted data
+                let (rmac, rdata) = response_data.split_at(16);
+                let rdata = Bytes::from(rdata.to_vec());
+
+                // Prepare metadata for MAC verification
+                let mut metadata = ApduMeta::default();
+                metadata[0] = response_data.len() as u8;
+
+                // Decrypt the data
+                let mut data_to_decrypt = BytesMut::from(&rdata[..]);
+                let decrypted_data = decrypt_data(
+                    &mut data_to_decrypt,
+                    self.session.keys().enc(),
+                    self.session.iv(),
+                )?;
+
+                // Update IV for MAC verification
+                self.session.update_iv(&metadata, &rdata);
+
+                // Verify MAC
+                if rmac != self.session.iv().as_slice() {
+                    warn!("MAC verification failed for secure channel response");
+                    return Err(Error::SecureProtocol(SecureProtocolError::Protocol(
+                        "Invalid response MAC",
+                    )));
+                }
+
+                trace!("Decrypted response: len={}", decrypted_data.len());
+
+                Ok(decrypted_data)
+            }
+            None => {
+                warn!("Invalid response payload");
+                return Err(Error::SecureProtocol(SecureProtocolError::Protocol(
+                    "Invalid response payload",
+                )));
+            }
         }
-
-        // Split into MAC and encrypted data
-        let (rmac, rdata) = response_data.split_at(16);
-        let rdata = Bytes::from(rdata.to_vec());
-
-        // Prepare metadata for MAC verification
-        let mut metadata = ApduMeta::default();
-        metadata[0] = response_data.len() as u8;
-
-        // Decrypt the data
-        let mut data_to_decrypt = BytesMut::from(&rdata[..]);
-        let decrypted_data = decrypt_data(
-            &mut data_to_decrypt,
-            self.session.keys().enc(),
-            self.session.iv(),
-        )?;
-
-        // Update IV for MAC verification
-        self.session.update_iv(&metadata, &rdata);
-
-        // Verify MAC
-        if rmac != self.session.iv().as_slice() {
-            warn!("MAC verification failed for secure channel response");
-            return Err(Error::SecureProtocol(SecureProtocolError::Protocol(
-                "Invalid response MAC",
-            )));
-        }
-
-        trace!("Decrypted response: len={}", decrypted_data.len());
-
-        Ok(decrypted_data.to_vec())
     }
 }
 
@@ -264,7 +264,7 @@ impl CommandProcessor for KeycardSCP {
         transport: &mut dyn CardTransport,
     ) -> Result<Response, ProcessorError> {
         if !self.is_open() {
-            return Err(ProcessorError::session("Secure channel not established"));
+            return Err(SecureProtocolError::Session("Secure channel not established").into());
         }
 
         trace!(command = ?command, "Processing command with Keycard secure channel");
@@ -285,7 +285,7 @@ impl CommandProcessor for KeycardSCP {
                 .map_err(|e| ProcessorError::Other(e.to_string()))?;
 
             // Create a new response with decrypted data
-            let decrypted_response = Response::from_bytes(decrypted_data.as_ref())?;
+            let decrypted_response = Response::from_bytes(&decrypted_data)?;
             Ok(decrypted_response)
         } else {
             // For error responses, just return as is
@@ -293,8 +293,8 @@ impl CommandProcessor for KeycardSCP {
         }
     }
 
-    fn is_active(&self) -> bool {
-        self.is_open()
+    fn security_level(&self) -> SecurityLevel {
+        self.security_level().clone()
     }
 }
 
@@ -303,17 +303,20 @@ impl SecureChannel for KeycardSCP {
         self.is_open()
     }
 
-    fn close(&mut self) -> nexum_apdu_core::Result<()> {
+    fn close(&mut self) -> Result<(), SecureProtocolError> {
         warn!("Closure of secure channel not implemented for Keycard secure channel");
         Ok(())
     }
 
-    fn reestablish(&mut self) -> nexum_apdu_core::Result<()> {
+    fn reestablish(&mut self) -> Result<(), SecureProtocolError> {
         warn!("Reestablish not implemented for Keycard secure channel");
-        Err(ProcessorError::session(
+        Err(SecureProtocolError::Session(
             "Cannot reestablish Keycard secure channel - a new session must be created",
-        )
-        .into())
+        ))
+    }
+
+    fn current_security_level(&self) -> SecurityLevel {
+        self.security_level().clone()
     }
 }
 
@@ -334,25 +337,25 @@ impl KeycardSecureChannelProvider {
             card_public_key,
         }
     }
+
+    pub fn pairing_info(&self) -> &PairingInfo {
+        &self.pairing_info
+    }
 }
 
-impl nexum_apdu_core::processor::secure::SecureChannelProvider for KeycardSecureChannelProvider {
+impl SecureChannelProvider for KeycardSecureChannelProvider {
     fn create_secure_channel(
         &self,
         transport: &mut dyn CardTransport,
-    ) -> nexum_apdu_core::Result<Box<dyn CommandProcessor>> {
+    ) -> Result<Box<dyn CommandProcessor>, SecureProtocolError> {
         // Create a new secure channel
-        let mut secure_channel = KeycardSCP::new(
-            Session::new(&self.card_public_key, &self.pairing_info, transport).map_err(|e| {
-                nexum_apdu_core::Error::SecureProtocol(SecureProtocolError::Other(e.to_string()))
-            })?,
-        );
+        let mut secure_channel = KeycardSCP::new(Session::new(
+            &self.card_public_key,
+            &self.pairing_info,
+            transport,
+        )?);
 
-        secure_channel
-            .mutually_authenticate(transport)
-            .map_err(|e| {
-                nexum_apdu_core::Error::SecureProtocol(SecureProtocolError::Other(e.to_string()))
-            })?;
+        secure_channel.mutually_authenticate(transport)?;
 
         Ok(Box::new(secure_channel))
     }

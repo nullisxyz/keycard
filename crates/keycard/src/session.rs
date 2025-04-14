@@ -6,7 +6,10 @@
 use bytes::Bytes;
 use cipher::{Iv, Key};
 use k256::{PublicKey, SecretKey};
-use nexum_apdu_core::{ApduCommand, ApduResponse, CardTransport, processor::SecureProtocolError};
+use nexum_apdu_core::{
+    ApduCommand, ApduResponse, CardTransport, processor::SecureProtocolError,
+    response::error::ResponseError,
+};
 use rand_v8::thread_rng;
 use zeroize::Zeroize;
 
@@ -58,7 +61,7 @@ impl Session {
         card_public_key: &PublicKey,
         pairing_info: &PairingInfo,
         transport: &mut dyn CardTransport,
-    ) -> crate::Result<Self> {
+    ) -> Result<Self, SecureProtocolError> {
         // Generate an ephemeral keypair for the host for this session
         let host_private_key = SecretKey::random(&mut thread_rng());
 
@@ -68,36 +71,41 @@ impl Session {
         );
 
         // Send the command
-        let response_bytes = transport.transmit_raw(&cmd.to_command().to_bytes())?;
+        let response_bytes = transport
+            .transmit_raw(&cmd.to_command().to_bytes())
+            .map_err(ResponseError::from)?;
         let response = nexum_apdu_core::Response::from_bytes(&response_bytes)?;
 
         // Check for errors
         if !response.is_success() {
-            return Err(crate::Error::SecureProtocol(SecureProtocolError::Protocol(
-                "Open secure channel failed",
-            )));
+            return Err(SecureProtocolError::Protocol("Open secure channel failed"));
         }
 
-        let response_data = response.payload();
-        if response_data.len() != 48 {
-            return Err(crate::Error::SecureProtocol(SecureProtocolError::Protocol(
-                "Invalid response data length",
-            )));
+        match response.payload() {
+            Some(payload) => {
+                if payload.len() != 48 {
+                    return Err(SecureProtocolError::Protocol(
+                        "Invalid response data length",
+                    ));
+                }
+
+                // Generate the shared secret
+                let shared_secret =
+                    generate_ecdh_shared_secret(&host_private_key, &card_public_key);
+
+                // Derive the session keys
+                let challenge = Challenge::from_slice(&payload[..32]);
+                let iv = Iv::<KeycardScp>::clone_from_slice(&payload[32..48]);
+                let (enc_key, mac_key) =
+                    derive_session_keys(shared_secret, &pairing_info.key, challenge);
+
+                Ok(Self {
+                    keys: Keys::new(enc_key, mac_key),
+                    iv,
+                })
+            }
+            None => Err(SecureProtocolError::Protocol("No response payload")),
         }
-
-        // Generate the shared secret
-        let shared_secret = generate_ecdh_shared_secret(&host_private_key, &card_public_key);
-
-        // Derive the session keys
-        let card_data: [u8; 48] = response_data.try_into().unwrap();
-        let challenge = Challenge::from_slice(&card_data[..32]);
-        let iv = Iv::<KeycardScp>::clone_from_slice(&card_data[32..48]);
-        let (enc_key, mac_key) = derive_session_keys(shared_secret, &pairing_info.key, challenge);
-
-        Ok(Self {
-            keys: Keys::new(enc_key, mac_key),
-            iv,
-        })
     }
 
     pub fn from_raw(

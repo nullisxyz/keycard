@@ -12,13 +12,11 @@ pub struct Version {
 }
 
 impl TryFrom<&Tlv> for Version {
-    type Error = anyhow::Error;
+    type Error = crate::Error;
 
     fn try_from(tlv: &Tlv) -> Result<Self, Self::Error> {
-        if tlv.tag()
-            != &Tag::try_from(tags::OTHER).map_err(|_| anyhow::Error::msg("Invalid tag"))?
-        {
-            return Err(anyhow::Error::msg("Invalid tag"));
+        if tlv.tag() != &Tag::try_from(tags::OTHER)? {
+            return Err(Self::Error::InvalidData("Invalid tag"));
         }
 
         let (major, minor) = match tlv.value() {
@@ -27,7 +25,7 @@ impl TryFrom<&Tlv> for Version {
                 let minor = bytes[1];
                 (major, minor)
             }
-            _ => return Err(anyhow::Error::msg("Invalid value")),
+            _ => return Err(Self::Error::InvalidData("Invalid value")),
         };
 
         Ok(Version { major, minor })

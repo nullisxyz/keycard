@@ -1,27 +1,47 @@
 use coins_bip32::path::DerivationPath;
 
-use crate::Error;
-
 pub mod derive_key;
+pub use derive_key::*;
 pub mod export_key;
+pub use export_key::*;
 pub mod factory_reset;
+pub use factory_reset::*;
 pub mod generate_key;
+pub use generate_key::*;
 pub mod generate_mnemonic;
+pub use generate_mnemonic::*;
 pub mod get_data;
+pub use get_data::*;
 pub mod get_status;
+pub use get_status::*;
 pub mod ident;
+pub use ident::*;
 pub mod init;
+pub use init::*;
 pub mod load_key;
+pub use load_key::*;
 pub mod mutually_authenticate;
+pub use mutually_authenticate::*;
 pub mod open_secure_channel;
+pub use open_secure_channel::*;
 pub mod pair;
+pub use pair::*;
 pub mod pin;
+pub use pin::*;
 pub mod remove_key;
+pub use remove_key::*;
 pub mod select;
+pub use select::*;
 pub mod set_pinless_path;
+pub use set_pinless_path::*;
 pub mod sign;
+pub use sign::*;
 pub mod store_data;
+pub use store_data::*;
 pub mod unpair;
+pub use unpair::*;
+
+use crate::Error;
 
 pub const CLA_GP: u8 = 0x80;
 
@@ -70,7 +90,7 @@ pub(crate) fn prepare_derivation_parameters(
         KeyPath::Current => {
             // No derivation, using current key
             if derive_mode.is_some() {
-                return Err(Error::InvalidDerivationArguments(
+                return Err(crate::Error::InvalidDerivationArguments(
                     "Derive mode should not be specified when using current key".into(),
                 ));
             }

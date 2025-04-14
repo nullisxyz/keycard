@@ -42,14 +42,6 @@ apdu_pair! {
                 #[sw(status::SW_WRONG_DATA)]
                 #[error("Wrong data: Data is too long")]
                 WrongData,
-
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X}{sw2:02X}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
-                }
             }
         }
     }

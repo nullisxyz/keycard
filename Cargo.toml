@@ -14,7 +14,7 @@ keywords = ["smart-card", "cryptography", "iso7816", "apdu", "keycard"]
 categories = ["cryptography", "embedded", "hardware-support"]
 
 [workspace.lints.rust]
-missing-debug-implementations = "warn"
+# missing-debug-implementations = "warn"
 # missing-docs = "warn"
 unreachable-pub = "warn"
 unused-must-use = "deny"
@@ -38,18 +38,23 @@ cargo.features = ["all"]
 
 [workspace.dependencies]
 ## nexum-apdu crates
-nexum-apdu-core = { git = "https://github.com/nullisxyz/apdu", branch = "fix-error-handling-mess" }
-nexum-apdu-macros = { git = "https://github.com/nullisxyz/apdu", branch = "fix-error-handling-mess" }
-nexum-apdu-transport-pcsc = { git = "https://github.com/nullisxyz/apdu", branch = "fix-error-handling-mess" }
-nexum-apdu-globalplatform = { git = "https://github.com/nullisxyz/apdu", branch = "fix-error-handling-mess" }
+nexum-apdu-core = { git = "https://github.com/nullisxyz/apdu" }
+nexum-apdu-macros = { git = "https://github.com/nullisxyz/apdu" }
+nexum-apdu-transport-pcsc = { git = "https://github.com/nullisxyz/apdu" }
+nexum-apdu-globalplatform = { git = "https://github.com/nullisxyz/apdu" }
 
 ## keycard crates
 nexum-keycard = { path = "crates/keycard", version = "0.1.0" }
+nexum-keycard-signer = { path = "crates/signer", version = "0.1.0" }
 
 ## crypto
 aes = { version = "0.8.4", default-features = false }
 alloy-primitives = { version = "1.0", default-features = false }
-alloy-signer = { version = "0.13.0", default-features = false }
+alloy-network = { version = "0.14", default-features = false }
+alloy-signer = { version = "0.14", default-features = false }
+alloy-consensus = { version = "0.14.0", default-features = false }
+coins-bip32 = { version = "0.12.0", default-features = false }
+coins-bip39 = { version = "0.12.0", default-features = false }
 k256 = { version = "0.13", features = ["ecdsa", "ecdh"] }
 pbkdf2 = "0.12"
 sha2 = "0.10"
@@ -76,3 +81,5 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 derive_more = { version = "2.0", features = ["from", "display", "into"] }
+tokio = { version = "1", default-features = false }
+parking_lot = "0.12"

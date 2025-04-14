@@ -1,6 +1,9 @@
 use crate::Challenge;
+use nexum_apdu_core::response::error::ResponseError;
 use nexum_apdu_globalplatform::constants::status;
 use nexum_apdu_macros::apdu_pair;
+
+use crate::crypto::Cryptogram;
 
 use super::CLA_GP;
 
@@ -23,9 +26,8 @@ apdu_pair! {
             ok {
                 /// Success response
                 #[sw(status::SW_NO_ERROR)]
-                #[payload(field = "cryptogram")]
                 Success {
-                    cryptogram: Vec<u8>,
+                    cryptogram: Cryptogram,
                 },
             }
 
@@ -39,13 +41,27 @@ apdu_pair! {
                 #[sw(status::SW_SECURITY_STATUS_NOT_SATISFIED)]
                 #[error("Security status not satisfied: Client cryptogram verification failed")]
                 SecurityStatusNotSatisfied,
+            }
 
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
+            custom_parse = |response: &nexum_apdu_core::Response| -> Result<MutuallyAuthenticateOk, MutuallyAuthenticateError> {
+                use nexum_apdu_core::ApduResponse;
+
+                match response.status() {
+                    status::SW_NO_ERROR => {
+                        match response.payload() {
+                            Some(payload) => {
+                                if payload.len() != 32 {
+                                    return Err(ResponseError::Parse("Invalid payload length").into());
+                                }
+                                let cryptogram = Cryptogram::from_slice(payload);
+                                Ok(MutuallyAuthenticateOk::Success { cryptogram: *cryptogram })
+                            },
+                            None => Err(ResponseError::Parse("No payload").into()),
+                        }
+                    },
+                    status::SW_CONDITIONS_NOT_SATISFIED => Err(MutuallyAuthenticateError::ConditionsNotSatisfied),
+                    status::SW_SECURITY_STATUS_NOT_SATISFIED => Err(MutuallyAuthenticateError::SecurityStatusNotSatisfied),
+                    _ => Err(MutuallyAuthenticateError::Unknown { sw1: response.status().sw1, sw2: response.status().sw2 }),
                 }
             }
         }

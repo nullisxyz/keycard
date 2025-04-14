@@ -11,7 +11,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xC1,
-            required_security_level: SecurityLevel::authenticated_mac(),
+            required_security_level: SecurityLevel::encrypted(),
 
             builders {
                 /// Create a SET PINLESS PATH command with the nominated path
@@ -39,14 +39,6 @@ apdu_pair! {
                 #[sw(status::SW_WRONG_DATA)]
                 #[error("Wrong data: Data must be a multiple of 32 bytes")]
                 WrongData,
-
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: SW1={sw1}, SW2={sw2}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
-                }
             }
         }
     }

@@ -9,19 +9,12 @@ mod session;
 mod types;
 
 pub use application::Keycard;
-pub use commands::generate_key::*;
-pub use commands::init::*;
-pub use commands::mutually_authenticate::*;
-pub use commands::open_secure_channel::*;
-pub use commands::pair::*;
-pub use commands::pin::*;
-pub use commands::select::*;
-pub use commands::sign::*;
+pub use commands::*;
 pub use crypto::Challenge;
 pub use error::{Error, Result};
 pub use secrets::Secrets;
 pub use secure_channel::KeycardSCP;
-pub use types::{ApplicationInfo, ApplicationStatus, PairingInfo};
+pub use types::{ApplicationInfo, ApplicationStatus, Keypair, PairingInfo, PublicKey};
 
 pub use constants::*;
 

@@ -1,17 +1,16 @@
-use thiserror::Error;
+use coins_bip39::{MnemonicError, WordlistError};
+use iso7816_tlv::TlvError;
+use nexum_apdu_core::ApduExecutorErrors;
+use nexum_apdu_globalplatform::select::SelectError;
 
-use crate::VerifyPinError;
+use crate::commands::*;
 
 /// Result type for Keycard operations
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Error type for Keycard operations
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// APDU-related errors
-    #[error(transparent)]
-    Apdu(#[from] nexum_apdu_core::Error),
-
     /// Transport-related errors
     #[error(transparent)]
     TransportError(#[from] nexum_apdu_core::transport::TransportError),
@@ -51,9 +50,6 @@ pub enum Error {
     #[error("PIN verification required")]
     PinVerificationRequired,
 
-    #[error(transparent)]
-    Pin(#[from] VerifyPinError),
-
     #[error("Pairing failed")]
     PairingFailed,
 
@@ -78,37 +74,101 @@ pub enum Error {
     #[error("Invalid derivation arguments: {0}")]
     InvalidDerivationArguments(String),
 
-    #[error("Unknown error")]
-    Unknown,
+    // Commands
+    #[error(transparent)]
+    DeriveKeyError(#[from] DeriveKeyError),
+
+    #[error(transparent)]
+    ExportKeyError(#[from] ExportKeyError),
+
+    #[error(transparent)]
+    FactoryResetError(#[from] FactoryResetError),
+
+    #[error(transparent)]
+    GenerateKeyError(#[from] GenerateKeyError),
+
+    #[error(transparent)]
+    GenerateMnemonicError(#[from] GenerateMnemonicError),
+
+    #[error(transparent)]
+    GetDataError(#[from] GetDataError),
+
+    #[error(transparent)]
+    GetStatusError(#[from] GetStatusError),
+
+    #[error(transparent)]
+    IdentError(#[from] IdentError),
+
+    #[error(transparent)]
+    InitError(#[from] InitError),
+
+    #[error(transparent)]
+    LoadKeyError(#[from] LoadKeyError),
+
+    #[error(transparent)]
+    MutuallyAuthenticateError(#[from] MutuallyAuthenticateError),
+
+    #[error(transparent)]
+    OpenSecureChannelError(#[from] OpenSecureChannelError),
+
+    #[error(transparent)]
+    PairError(#[from] PairError),
+
+    #[error(transparent)]
+    VerifyPinError(#[from] VerifyPinError),
+
+    #[error(transparent)]
+    ChangePinError(#[from] ChangePinError),
+
+    #[error(transparent)]
+    UnblockPinError(#[from] UnblockPinError),
+
+    #[error(transparent)]
+    RemoveKeyError(#[from] RemoveKeyError),
+
+    #[error(transparent)]
+    SelectError(#[from] SelectError),
+
+    #[error(transparent)]
+    SetPinlessPathError(#[from] SetPinlessPathError),
+
+    #[error(transparent)]
+    SignError(#[from] SignError),
+
+    #[error(transparent)]
+    StoreDataError(#[from] StoreDataError),
+
+    #[error(transparent)]
+    UnpairError(#[from] UnpairError),
+
+    #[error("TlvError: {0}")]
+    TlvError(TlvError),
+
+    #[error(transparent)]
+    EllipticCurveError(#[from] k256::elliptic_curve::Error),
+
+    #[error(transparent)]
+    EcdsaSignatureError(#[from] k256::ecdsa::Error),
+
+    #[error(transparent)]
+    AlloySignatureError(#[from] alloy_signer::Error),
+
+    #[error(transparent)]
+    MnemonicError(#[from] MnemonicError),
+
+    #[error(transparent)]
+    WordlistError(#[from] WordlistError),
+
+    #[error(transparent)]
+    Bip32Error(#[from] coins_bip32::Bip32Error),
 }
 
-// Implement From for bip32::Error to allow using .into()
-impl From<coins_bip32::Bip32Error> for Error {
-    fn from(err: coins_bip32::Bip32Error) -> Self {
-        Error::Bip32PathParsingError(err)
+impl From<TlvError> for Error {
+    fn from(error: TlvError) -> Self {
+        Error::TlvError(error)
     }
 }
 
-// impl From<Error> for nexum_apdu_core::processor::ProcessorError {
-//     fn from(err: Error) -> Self {
-//         match err {
-//             // Map specific error types directly when possible
-//             Error::TransportError(e) => Self::Transport(e),
-//             Error::Response(e) => Self::InvalidResponse(e),
-//             Error::PinVerificationRequired => {
-//                 Self::authentication_failed("PIN verification required")
-//             }
-//             Error::WrongPin(attempts) => Self::authentication_failed("Wrong PIN"),
-//             Error::PairingFailed => Self::authentication_failed("Pairing failed"),
-//             Error::MutualAuthenticationFailed => {
-//                 Self::authentication_failed("Mutual authentication failed")
-//             }
-//             Error::AlreadyInitialised => Self::protocol("Already initialized"),
-//             Error::NoAvailablePairingSlots => Self::protocol("No available pairing slots"),
-//             Error::Processor(e) => e, // Passthrough if it's already a ProcessorError
-
-//             // For other cases, convert to string representation
-//             _ => Self::other(err.to_string()),
-//         }
-//     }
-// }
+impl ApduExecutorErrors for Error {
+    type Error = Self;
+}

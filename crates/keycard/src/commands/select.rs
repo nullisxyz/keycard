@@ -6,29 +6,29 @@ use nexum_apdu_globalplatform::commands::select::SelectOk;
 use crate::constants::tags;
 use crate::types::ApplicationInfo;
 
-impl TryFrom<SelectOk> for SelectSuccessResponse {
-    type Error = anyhow::Error;
+impl TryFrom<SelectOk> for ParsedSelectOk {
+    type Error = crate::Error;
 
     fn try_from(response: SelectOk) -> Result<Self, Self::Error> {
         match response {
-            SelectOk::Success { fci } => SelectSuccessResponse::try_from(fci.as_slice()),
+            SelectOk::Success { fci } => ParsedSelectOk::try_from(fci.as_slice()),
         }
     }
 }
 
 #[derive(Debug)]
-pub enum SelectSuccessResponse {
+pub enum ParsedSelectOk {
     /// Regular response with application info
     ApplicationInfo(ApplicationInfo),
     /// Response in pre-initialized state (only public key - optional)
     PreInitialized(Option<k256::PublicKey>),
 }
 
-impl fmt::Display for SelectSuccessResponse {
+impl fmt::Display for ParsedSelectOk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SelectSuccessResponse::ApplicationInfo(info) => write!(f, "{}", info),
-            SelectSuccessResponse::PreInitialized(maybe_key) => {
+            ParsedSelectOk::ApplicationInfo(info) => write!(f, "{}", info),
+            ParsedSelectOk::PreInitialized(maybe_key) => {
                 writeln!(f, "Pre-initialized State:")?;
                 match &maybe_key {
                     Some(key) => write!(f, "  Public Key: {:#?}", key),
@@ -39,25 +39,25 @@ impl fmt::Display for SelectSuccessResponse {
     }
 }
 
-impl TryFrom<&[u8]> for SelectSuccessResponse {
-    type Error = anyhow::Error;
+impl TryFrom<&[u8]> for ParsedSelectOk {
+    type Error = crate::Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let fci = Tlv::from_bytes(value).unwrap();
+        let fci = Tlv::from_bytes(value)?;
 
-        let application_info = Tag::try_from(tags::TEMPLATE_APPLICATION_INFO).unwrap();
-        let ecc_public_key = Tag::try_from(tags::ECC_PUBLIC_KEY).unwrap();
+        let application_info = Tag::try_from(tags::TEMPLATE_APPLICATION_INFO)?;
+        let ecc_public_key = Tag::try_from(tags::ECC_PUBLIC_KEY)?;
 
         if fci.tag() == &application_info {
-            Ok(SelectSuccessResponse::ApplicationInfo(
-                ApplicationInfo::try_from(&fci)?,
-            ))
+            Ok(ParsedSelectOk::ApplicationInfo(ApplicationInfo::try_from(
+                &fci,
+            )?))
         } else if fci.tag() == &ecc_public_key {
-            Ok(SelectSuccessResponse::PreInitialized(
-                *crate::types::PublicKey::try_from(&fci).unwrap(),
+            Ok(ParsedSelectOk::PreInitialized(
+                *crate::types::PublicKey::try_from(&fci)?,
             ))
         } else {
-            Err(anyhow::Error::msg("Unsupported tag"))
+            Err(Self::Error::InvalidData("Invalid Tag"))
         }
     }
 }

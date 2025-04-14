@@ -31,14 +31,6 @@ apdu_pair! {
                 #[sw(status::SW_CONDITIONS_NOT_SATISFIED)]
                 #[error("Conditions not satisfied: PIN not verified")]
                 ConditionsNotSatisfied,
-
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X}{sw2:02X}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
-                }
             }
         }
     }

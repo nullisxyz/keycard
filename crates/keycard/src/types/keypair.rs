@@ -1,6 +1,9 @@
 use std::fmt;
 
-use iso7816_tlv::ber::{Tag, Tlv, Value};
+use iso7816_tlv::{
+    TlvError,
+    ber::{Tag, Tlv, Value},
+};
 use k256::{PublicKey, SecretKey};
 
 // Import the tags from the constants module
@@ -79,78 +82,74 @@ impl Keypair {
     /// Serialize the keypair to bytes for sending to the card
     ///
     /// This is used for the LOAD KEY command.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, crate::Error> {
         let tlv: Tlv = self.try_into()?;
         Ok(tlv.to_vec())
     }
 }
 
 impl TryFrom<Tlv> for Keypair {
-    type Error = anyhow::Error;
+    type Error = crate::Error;
 
     fn try_from(tlv: Tlv) -> Result<Self, Self::Error> {
-        if tlv.tag() != &Tag::try_from(tags::TEMPLATE_KEYPAIR).unwrap() {
-            return Err(anyhow::Error::msg("Invalid keypair template tag"));
+        if tlv.tag() != &Tag::try_from(tags::TEMPLATE_KEYPAIR)? {
+            return Err(Self::Error::InvalidData(
+                "TLV tag was not keypair template tag",
+            ));
         }
 
-        let mut keypair = Keypair::new();
-
         match tlv.value() {
-            Value::Primitive(_) => {
-                return Err(anyhow::Error::msg(
-                    "Expected constructed TLV for keypair template",
-                ));
-            }
+            Value::Primitive(_) => Err(Self::Error::InvalidData(
+                "Expected constructed TLV for keypair template",
+            )),
             Value::Constructed(tlvs) => {
+                let mut keypair = Keypair::new();
                 for tlv in tlvs {
                     let tag = tlv.tag();
 
-                    if tag == &Tag::try_from(tags::ECC_PUBLIC_KEY).unwrap() {
+                    if tag == &Tag::try_from(tags::ECC_PUBLIC_KEY)? {
                         keypair.public_key = Some(PublicKey::from_sec1_bytes(
                             &get_primitive_value(tag, &tlv)?,
                         )?);
-                    } else if tag == &Tag::try_from(tags::ECC_PRIVATE_KEY).unwrap() {
+                    } else if tag == &Tag::try_from(tags::ECC_PRIVATE_KEY)? {
                         keypair.private_key =
                             Some(SecretKey::from_slice(&get_primitive_value(tag, &tlv)?)?);
-                    } else if tag == &Tag::try_from(tags::CHAIN_CODE).unwrap() {
+                    } else if tag == &Tag::try_from(tags::CHAIN_CODE)? {
                         keypair.chain_code = Some(get_primitive_value(tag, &tlv)?);
                     }
                 }
+                Ok(keypair)
             }
         }
-
-        Ok(keypair)
     }
 }
 
 impl TryFrom<&[u8]> for Keypair {
-    type Error = anyhow::Error;
+    type Error = crate::Error;
 
-    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-        let (tlv, _) = Tlv::parse(data);
-        Self::try_from(tlv.unwrap())
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        let (tlv, _) = Tlv::parse(value);
+        Self::try_from(tlv?)
     }
 }
 
 impl TryInto<Tlv> for &Keypair {
-    type Error = anyhow::Error;
+    type Error = crate::Error;
 
     fn try_into(self) -> Result<Tlv, Self::Error> {
-        let template_tag = Tag::try_from(tags::TEMPLATE_KEYPAIR).unwrap();
+        let template_tag = Tag::try_from(tags::TEMPLATE_KEYPAIR)?;
         let mut inner_tlvs = Vec::new();
 
         // Helper function to create TLV for each component
-        let add_tlv = |tag_value: u8,
-                       data: &Option<Vec<u8>>,
-                       tlvs: &mut Vec<Tlv>|
-         -> Result<(), anyhow::Error> {
-            if let Some(data) = data {
-                let tag = Tag::try_from(tag_value).unwrap();
-                let tlv = Tlv::new(tag, Value::Primitive(data.clone())).unwrap();
-                tlvs.push(tlv);
-            }
-            Ok(())
-        };
+        let add_tlv =
+            |tag_value: u8, data: &Option<Vec<u8>>, tlvs: &mut Vec<Tlv>| -> Result<(), TlvError> {
+                if let Some(data) = data {
+                    let tag = Tag::try_from(tag_value)?;
+                    let tlv = Tlv::new(tag, Value::Primitive(data.clone()))?;
+                    tlvs.push(tlv);
+                }
+                Ok(())
+            };
 
         // Add TLV for each component if present
         add_tlv(
@@ -165,7 +164,7 @@ impl TryInto<Tlv> for &Keypair {
         )?;
         add_tlv(tags::CHAIN_CODE, &self.chain_code, &mut inner_tlvs)?;
 
-        Ok(Tlv::new(template_tag, Value::Constructed(inner_tlvs)).unwrap())
+        Ok(Tlv::new(template_tag, Value::Constructed(inner_tlvs))?)
     }
 }
 

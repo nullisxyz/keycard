@@ -4,7 +4,7 @@ use iso7816_tlv::ber::{Tlv, Value};
 
 /// Capability flags for the keycard
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Capability {
+pub enum Capability {
     SecureChannel = 0x01,
     KeyManagement = 0x02,
     CredentialsManagement = 0x04,
@@ -45,12 +45,12 @@ impl Capabilities {
 }
 
 impl TryFrom<&Tlv> for Capabilities {
-    type Error = anyhow::Error;
+    type Error = crate::Error;
 
     fn try_from(tlv: &Tlv) -> Result<Self, Self::Error> {
         match tlv.value() {
             Value::Primitive(data) => Ok(data[0].into()),
-            _ => Err(anyhow::Error::msg("Invalid TLV for Capabilities")),
+            _ => Err(Self::Error::InvalidData("Invalid TLV for Capabilities")),
         }
     }
 }

@@ -3,6 +3,9 @@ use nexum_apdu_macros::apdu_pair;
 use nexum_apdu_globalplatform::constants::status;
 use rand::RngCore;
 
+use crate::types::Signature;
+use nexum_apdu_core::response::error::ResponseError;
+
 use super::CLA_GP;
 
 apdu_pair! {
@@ -32,10 +35,9 @@ apdu_pair! {
             ok {
                 /// Success response
                 #[sw(status::SW_NO_ERROR)]
-                #[payload(field = "data")]
                 Success {
                     /// The response data
-                    data: Vec<u8>,
+                    signature: crate::types::Signature,
                 }
             }
 
@@ -44,6 +46,22 @@ apdu_pair! {
                 #[sw(status::SW_WRONG_DATA)]
                 #[error("Wrong data")]
                 WrongData,
+            }
+
+            custom_parse = |response: &nexum_apdu_core::Response| -> Result<IdentOk, IdentError> {
+                use nexum_apdu_core::ApduResponse;
+
+                match response.status() {
+                    status::SW_NO_ERROR => match response.payload() {
+                        Some(payload) => Ok(IdentOk::Success {
+                            signature: Signature::try_from(payload.as_ref())
+                                .map_err(|e| ResponseError::Message(e.to_string()))?,
+                        }),
+                        None => Err(ResponseError::Parse("No payload data").into()),
+                    },
+                    status::SW_WRONG_DATA => Err(IdentError::WrongData),
+                    _ => Err(IdentError::Unknown { sw1: response.status().sw1, sw2: response.status().sw2 }),
+                }
             }
         }
     }

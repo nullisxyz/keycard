@@ -33,14 +33,6 @@ apdu_pair! {
                 #[sw(status::SW_INCORRECT_P1P2)]
                 #[error("Incorrect P1/P2: The record specified is not valid")]
                 IncorrectP1P2,
-
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X}{sw2:02X}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
-                }
             }
         }
     }

@@ -46,8 +46,8 @@ pub fn generate_ecdh_shared_secret(private: &SecretKey, public: &PublicKey) -> S
 /// # Returns
 /// `true` if the cryptogram is valid, `false` otherwise.
 pub(crate) fn calculate_cryptogram(
-    challenge: &Challenge,
     shared_secret: &PairingToken,
+    challenge: &Challenge,
 ) -> Cryptogram {
     let mut hasher = Sha256::new();
     hasher.update(shared_secret);

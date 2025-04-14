@@ -1,3 +1,4 @@
+use nexum_apdu_core::response::error::ResponseError;
 use nexum_apdu_globalplatform::constants::status;
 use nexum_apdu_macros::apdu_pair;
 
@@ -9,7 +10,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xD4,
-            required_security_level: SecurityLevel::authenticated_mac(),
+            required_security_level: SecurityLevel::encrypted(),
 
             builders {
                 /// Create a new GENERATE KEY command with default parameters
@@ -23,9 +24,8 @@ apdu_pair! {
             ok {
                 /// Success response
                 #[sw(status::SW_NO_ERROR)]
-                #[payload(field = "public_key")]
                 Success {
-                    public_key: Vec<u8>,
+                    key_uid: [u8; 32],
                 },
             }
 
@@ -39,13 +39,24 @@ apdu_pair! {
                 #[sw(status::SW_CONDITIONS_NOT_SATISFIED)]
                 #[error("Conditions not satisfied: PIN is not validated")]
                 ConditionsNotSatisfied,
+            }
 
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X}{sw2:02X}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
+            custom_parse = |response: &nexum_apdu_core::Response| -> Result<GenerateKeyOk, GenerateKeyError> {
+                use nexum_apdu_core::ApduResponse;
+
+                match response.status() {
+                    status::SW_NO_ERROR => {
+                        match response.payload() {
+                            Some(payload) => Ok(GenerateKeyOk::Success{
+                                key_uid: payload.to_vec().try_into()
+                                    .map_err(|_| ResponseError::Parse("Key UID was not 32 bytes long"))?,
+                            }),
+                            None => Err(ResponseError::Parse("No payload in response").into()),
+                        }
+                    },
+                    status::SW_SECURITY_STATUS_NOT_SATISFIED => Err(GenerateKeyError::SecurityStatusNotSatisfied),
+                    status::SW_CONDITIONS_NOT_SATISFIED => Err(GenerateKeyError::ConditionsNotSatisfied),
+                    _ => Err(GenerateKeyError::Unknown { sw1: response.status().sw1, sw2: response.status().sw2 }),
                 }
             }
         }

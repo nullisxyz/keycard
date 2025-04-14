@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use iso7816_tlv::TlvError;
 use iso7816_tlv::ber::{Tag, Tlv, Value};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::{PublicKey, SecretKey};
@@ -18,7 +17,7 @@ apdu_pair! {
 
             builders {
                 /// Create a LOAD KEY command for loading an ECC secp256k1 keypair
-                fn load_keypair(public_key: Option<PublicKey>, private_key: SecretKey) -> Result<Self, TlvError> {
+                pub fn load_keypair(public_key: Option<PublicKey>, private_key: SecretKey) -> Result<Self, crate::Error> {
                     let buf = Bytes::from(
                         create_keypair_template(
                             public_key,
@@ -31,7 +30,7 @@ apdu_pair! {
                 }
 
                 /// Create a LOAD KEY command for loading an ECC secp256k1 extended keypair
-                fn load_extended_keypair(public_key: Option<PublicKey>, private_key: SecretKey, chain_code: [u8; 32]) -> Result<Self, TlvError> {
+                pub fn load_extended_keypair(public_key: Option<PublicKey>, private_key: SecretKey, chain_code: [u8; 32]) -> Result<Self, crate::Error> {
                     let buf = Bytes::from(
                         create_keypair_template(
                             public_key,
@@ -45,7 +44,7 @@ apdu_pair! {
                 }
 
                 /// Create a LOAD KEY command for loading a BIP39 seed
-                fn load_bip39_seed(seed: &[u8; 64]) -> Self {
+                pub fn load_bip39_seed(seed: &[u8; 64]) -> Self {
                     Self::new(0x03, 0x00).with_data(Bytes::copy_from_slice(seed)).with_le(0)
                 }
             }
@@ -57,7 +56,7 @@ apdu_pair! {
                 #[sw(status::SW_NO_ERROR)]
                 Success {
                     /// Key UID
-                    key_uid: Vec<u8>,
+                    key_uid: [u8; 32],
                 }
             }
 
@@ -71,13 +70,24 @@ apdu_pair! {
                 #[sw(status::SW_INCORRECT_P1P2)]
                 #[error("Incorrect P1/P2: P1 is invalid")]
                 IncorrectP1P2,
+            }
 
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X}{sw2:02X}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8,
+            custom_parse = |response: &nexum_apdu_core::Response| -> Result<LoadKeyOk, LoadKeyError> {
+                use nexum_apdu_core::ApduResponse;
+
+                match response.status() {
+                    status::SW_NO_ERROR => {
+                        match response.payload() {
+                            Some(payload) => Ok(LoadKeyOk::Success {
+                                key_uid: payload.to_vec().try_into()
+                                    .map_err(|_| LoadKeyError::WrongData)?,
+                            }),
+                            None => Err(LoadKeyError::WrongData),
+                        }
+                    },
+                    status::SW_WRONG_DATA => Err(LoadKeyError::WrongData),
+                    status::SW_INCORRECT_P1P2 => Err(LoadKeyError::IncorrectP1P2),
+                    _ => Err(LoadKeyError::Unknown{ sw1: response.status().sw1, sw2: response.status().sw2 }),
                 }
             }
         }
@@ -89,61 +99,34 @@ pub const TAG_ECC_PUBLIC_KEY: u8 = 0x80;
 pub const TAG_ECC_PRIVATE_KEY: u8 = 0x81;
 pub const TAG_CHAIN_CODE: u8 = 0x82;
 
-pub struct PublicKeyTlvWrapper(PublicKey);
-
-impl TryFrom<PublicKeyTlvWrapper> for Tlv {
-    type Error = TlvError;
-
-    fn try_from(wrapper: PublicKeyTlvWrapper) -> Result<Self, Self::Error> {
-        Tlv::new(
-            Tag::try_from(TAG_ECC_PUBLIC_KEY)?,
-            Value::Primitive(wrapper.0.to_encoded_point(false).as_bytes().to_vec()),
-        )
-    }
-}
-
-pub struct PrivateKeyTlvWrapper(SecretKey);
-
-impl TryFrom<PrivateKeyTlvWrapper> for Tlv {
-    type Error = TlvError;
-
-    fn try_from(wrapper: PrivateKeyTlvWrapper) -> Result<Self, Self::Error> {
-        Tlv::new(
-            Tag::try_from(TAG_ECC_PRIVATE_KEY)?,
-            Value::Primitive(wrapper.0.to_bytes().as_slice().to_vec()),
-        )
-    }
-}
-
-pub struct ChainCodeTlvWrapper([u8; 32]);
-
-impl TryFrom<ChainCodeTlvWrapper> for Tlv {
-    type Error = TlvError;
-
-    fn try_from(wrapper: ChainCodeTlvWrapper) -> Result<Self, Self::Error> {
-        Tlv::new(
-            Tag::try_from(TAG_CHAIN_CODE)?,
-            Value::Primitive(wrapper.0.to_vec()),
-        )
-    }
-}
-
 fn create_keypair_template(
     public_key: Option<PublicKey>,
     private_key: SecretKey,
     chain_code: Option<[u8; 32]>,
-) -> Result<Tlv, TlvError> {
-    let mut tlvs: Vec<Tlv> = vec![];
-    if let Some(public_key) = public_key {
-        tlvs.push(PublicKeyTlvWrapper(public_key).try_into()?);
-    }
-    tlvs.push(PrivateKeyTlvWrapper(private_key).try_into()?);
-    if let Some(chain_code) = chain_code {
-        tlvs.push(ChainCodeTlvWrapper(chain_code).try_into()?);
-    }
-
+) -> Result<Tlv, crate::Error> {
     Tlv::new(
         Tag::try_from(TAG_KEYPAIR_TEMPLATE)?,
-        Value::Constructed(tlvs),
+        Value::Constructed({
+            let mut tlvs: Vec<Tlv> = vec![];
+            tlvs.push(Tlv::new(
+                Tag::try_from(TAG_ECC_PRIVATE_KEY)?,
+                Value::Primitive(private_key.to_bytes().as_slice().to_vec()),
+            )?);
+            if let Some(public_key) = public_key {
+                tlvs.push(Tlv::new(
+                    Tag::try_from(TAG_ECC_PUBLIC_KEY)?,
+                    Value::Primitive(public_key.to_encoded_point(false).as_bytes().to_vec()),
+                )?);
+            }
+            if let Some(chain_code) = chain_code {
+                tlvs.push(Tlv::new(
+                    Tag::try_from(TAG_CHAIN_CODE)?,
+                    Value::Primitive(chain_code.to_vec()),
+                )?);
+            }
+
+            tlvs
+        }),
     )
+    .map_err(Into::into)
 }

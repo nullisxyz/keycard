@@ -1,6 +1,8 @@
 use nexum_apdu_globalplatform::constants::status;
 use nexum_apdu_macros::apdu_pair;
 
+use crate::Keypair;
+
 use super::{CLA_GP, DeriveMode, KeyPath, prepare_derivation_parameters};
 
 pub enum ExportOption {
@@ -19,7 +21,7 @@ apdu_pair! {
 
             builders {
                 /// Create an EXPORT KEY command
-                fn with(
+                pub fn with(
                     what: ExportOption,
                     key_path: &KeyPath,
                     derive_mode: Option<DeriveMode>,
@@ -39,9 +41,8 @@ apdu_pair! {
             ok {
                 /// Success response
                 #[sw(status::SW_NO_ERROR)]
-                #[payload(field = "data")]
                 Success {
-                    data: Vec<u8>
+                    keypair: Keypair,
                 }
             }
 
@@ -60,13 +61,28 @@ apdu_pair! {
                 #[sw(status::SW_WRONG_DATA)]
                 #[error("Wrong Data: Invalid derivation path format")]
                 WrongData,
+            }
 
-                /// Other error
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X}{sw2:02X}")]
-                OtherError {
-                    sw1: u8,
-                    sw2: u8
+            custom_parse = |response: &nexum_apdu_core::Response| -> Result<ExportKeyOk, ExportKeyError> {
+                use nexum_apdu_core::ApduResponse;
+
+                match response.status() {
+                    status::SW_NO_ERROR => {
+                        match response.payload() {
+                            Some(payload) => {
+                                let keypair = Keypair::try_from(payload.as_ref())
+                                    .map_err(|e| nexum_apdu_core::response::error::ResponseError::Message(e.to_string()))?;
+                                Ok(ExportKeyOk::Success{
+                                    keypair,
+                                })
+                            },
+                            None => Err(ExportKeyError::WrongData),
+                        }
+                    },
+                    status::SW_CONDITIONS_NOT_SATISFIED => Err(ExportKeyError::ConditionsNotSatisfied),
+                    status::SW_INCORRECT_P1P2 => Err(ExportKeyError::IncorrectP1P2),
+                    status::SW_WRONG_DATA => Err(ExportKeyError::WrongData),
+                    _ => Err(ExportKeyError::Unknown {sw1: response.status().sw1, sw2: response.status().sw2}),
                 }
             }
         }

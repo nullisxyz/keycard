@@ -24,63 +24,47 @@ pub struct ApplicationInfo {
 }
 
 impl TryFrom<&Tlv> for ApplicationInfo {
-    type Error = anyhow::Error;
+    type Error = crate::Error;
 
     fn try_from(tlv: &Tlv) -> Result<Self, Self::Error> {
-        if tlv.tag()
-            != &Tag::try_from(tags::TEMPLATE_APPLICATION_INFO)
-                .map_err(|_| anyhow::Error::msg("Invalid tag"))?
-        {
-            return Err(anyhow::Error::msg("Invalid tag"));
+        if tlv.tag() != &Tag::try_from(tags::TEMPLATE_APPLICATION_INFO)? {
+            return Err(Self::Error::InvalidData(
+                "TLV tag was not application info template tag",
+            ));
         }
 
-        let (instance_uid, public_key, version, remaining_slots, key_uid, capabilities) =
-            match tlv.value() {
-                Value::Constructed(tlvs) => {
-                    let instance_uid: [u8; 16] =
-                        get_primitive_value(&Tag::try_from(tags::INSTANCE_UID).unwrap(), &tlvs[0])
-                            .unwrap()
-                            .try_into()
-                            .unwrap();
-                    let public_key = PublicKey::try_from(&tlvs[1])?;
-                    let version = Version::try_from(&tlvs[2])?;
-                    let remaining_slots =
-                        get_primitive_value(&Tag::try_from(tags::OTHER).unwrap(), &tlvs[3])?[0];
-                    let key_uid: Option<[u8; 32]> = {
-                        let raw_key_uid =
-                            get_primitive_value(&Tag::try_from(tags::KEY_UID).unwrap(), &tlvs[4])?;
-                        match raw_key_uid.len() {
-                            32 => Some(
-                                raw_key_uid
-                                    .try_into()
-                                    .map_err(|_| anyhow::Error::msg("Invalid key UID length"))?,
-                            ),
-                            0 => None,
-                            _ => Err(anyhow::Error::msg("Invalid key UID length"))?,
-                        }
-                    };
-                    let capabilities = Capabilities::try_from(&tlvs[5])?;
+        match tlv.value() {
+            Value::Constructed(tlvs) => {
+                let instance_uid: [u8; 16] =
+                    get_primitive_value(&Tag::try_from(tags::INSTANCE_UID)?, &tlvs[0])?
+                        .try_into()
+                        .unwrap();
+                let public_key = PublicKey::try_from(&tlvs[1])?;
+                let version = Version::try_from(&tlvs[2])?;
+                let remaining_slots =
+                    get_primitive_value(&Tag::try_from(tags::OTHER).unwrap(), &tlvs[3])?[0];
+                let key_uid: Option<[u8; 32]> = {
+                    let raw_key_uid =
+                        get_primitive_value(&Tag::try_from(tags::KEY_UID).unwrap(), &tlvs[4])?;
+                    match raw_key_uid.len() {
+                        32 => Some(raw_key_uid.try_into().unwrap()),
+                        0 => None,
+                        _ => Err(Self::Error::InvalidData("Invalid key UID length"))?,
+                    }
+                };
+                let capabilities = Capabilities::try_from(&tlvs[5])?;
 
-                    Ok((
-                        instance_uid,
-                        public_key,
-                        version,
-                        remaining_slots,
-                        key_uid,
-                        capabilities,
-                    ))
-                }
-                _ => Err(anyhow::Error::msg("Invalid value")),
-            }?;
-
-        Ok(Self {
-            instance_uid,
-            public_key: *public_key,
-            version,
-            remaining_slots,
-            key_uid,
-            capabilities,
-        })
+                Ok(Self {
+                    instance_uid,
+                    public_key: *public_key,
+                    version,
+                    remaining_slots,
+                    key_uid,
+                    capabilities,
+                })
+            }
+            _ => Err(Self::Error::InvalidData("TLV value was not constructed")),
+        }
     }
 }
 

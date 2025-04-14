@@ -48,14 +48,6 @@ apdu_pair! {
                 #[sw(status::SW_WRONG_DATA)]
                 #[error("Wrong data: Derivation sequence is invalid")]
                 WrongData,
-
-                /// Other errors
-                #[sw(_, _)]
-                #[error("Other error: {sw1:02X} {sw2:02X}")]
-                Other {
-                    sw1: u8,
-                    sw2: u8,
-                }
             }
         }
     }

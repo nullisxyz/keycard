@@ -17,9 +17,9 @@ apdu_pair! {
             builders {
                 /// Create a GENERATE MNEMONIC command with a given number of words (12, 15, 18, 21, 24)
                 pub fn with_words(words: u8) -> Result<Self, GenerateMnemonicError> {
-                    match words < 4 || words > 8 || words % 3 != 0 {
-                        true => Err(GenerateMnemonicError::IncorrectChecksumSize),
-                        false => Ok(Self::new(words, 0x00).with_le(0))
+                    match words {
+                        12 | 15 | 18 | 21 | 24 => Ok(Self::new(words / 3, 0x00).with_le(0)),
+                        _ => Err(GenerateMnemonicError::IncorrectChecksumSize),
                     }
                 }
             }

@@ -90,8 +90,7 @@ impl Session {
                 }
 
                 // Generate the shared secret
-                let shared_secret =
-                    generate_ecdh_shared_secret(&host_private_key, &card_public_key);
+                let shared_secret = generate_ecdh_shared_secret(&host_private_key, card_public_key);
 
                 // Derive the session keys
                 let challenge = Challenge::from_slice(&payload[..32]);
@@ -114,8 +113,8 @@ impl Session {
         iv: &Iv<KeycardScp>,
     ) -> Self {
         Self {
-            keys: Keys::new(enc_key.clone(), mac_key.clone()),
-            iv: iv.clone(),
+            keys: Keys::new(*enc_key, *mac_key),
+            iv: *iv,
         }
     }
 

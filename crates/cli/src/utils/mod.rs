@@ -63,7 +63,7 @@ pub fn save_pairing_to_file(
     let mut file = File::create(path)?;
 
     // Format: index,key_hex
-    let content = format!("{},{}", pairing_info.index, hex::encode(&pairing_info.key));
+    let content = format!("{},{}", pairing_info.index, hex::encode(pairing_info.key));
     file.write_all(content.as_bytes())?;
 
     Ok(())
@@ -81,7 +81,7 @@ pub fn prompt_for_pin() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// Apply pairing information to a Keycard instance
-pub fn apply_pairing_info<E: nexum_apdu_core::Executor>(
+pub fn apply_pairing_info<E>(
     keycard: &mut nexum_keycard::Keycard<E>,
     file: Option<&PathBuf>,
     key_hex: Option<&String>,
@@ -104,7 +104,7 @@ where
             .unwrap();
         let pairing_info = PairingInfo {
             key: pairing_key.into(),
-            index: idx as u8,
+            index: idx,
         };
         keycard.set_pairing_info(pairing_info);
         Ok(())

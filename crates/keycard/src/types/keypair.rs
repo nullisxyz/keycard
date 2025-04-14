@@ -15,7 +15,7 @@ use super::get_primitive_value;
 ///
 /// For EXPORT KEY command, this struct is obtained by parsing the response.
 /// For LOAD KEY command, this struct can be created and serialized to send to the card.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Keypair {
     /// ECC public key component (tag 0x80)
     pub public_key: Option<PublicKey>,
@@ -28,35 +28,26 @@ pub struct Keypair {
 }
 
 impl Keypair {
-    /// Creates a new empty keypair for loading to the card
-    ///
-    /// This is used for the LOAD KEY command.
-    pub fn new() -> Self {
-        Keypair {
-            public_key: None,
-            private_key: None,
-            chain_code: None,
-        }
-    }
-
     /// Creates a keypair with a private key for loading to the card
     ///
     /// This is primarily used for the LOAD KEY command.
     /// Note that the public key component is optional when loading a key.
     pub fn with_private_key(private_key: SecretKey) -> Self {
-        let mut keypair = Self::new();
-        keypair.private_key = Some(private_key);
-        keypair
+        Self {
+            private_key: Some(private_key),
+            ..Default::default()
+        }
     }
 
     /// Creates a keypair with public and private keys for loading to the card
     ///
     /// This is primarily used for the LOAD KEY command.
     pub fn with_keypair(public_key: PublicKey, private_key: SecretKey) -> Self {
-        let mut keypair = Self::new();
-        keypair.public_key = Some(public_key);
-        keypair.private_key = Some(private_key);
-        keypair
+        Self {
+            public_key: Some(public_key),
+            private_key: Some(private_key),
+            ..Default::default()
+        }
     }
 
     /// Creates an extended keypair with public key, private key, and chain code for loading to the card
@@ -67,11 +58,11 @@ impl Keypair {
         private_key: SecretKey,
         chain_code: Vec<u8>,
     ) -> Self {
-        let mut keypair = Self::new();
-        keypair.public_key = Some(public_key);
-        keypair.private_key = Some(private_key);
-        keypair.chain_code = Some(chain_code);
-        keypair
+        Self {
+            public_key: Some(public_key),
+            private_key: Some(private_key),
+            chain_code: Some(chain_code),
+        }
     }
 
     /// Determines if this keypair has a chain code, making it an extended keypair
@@ -103,19 +94,18 @@ impl TryFrom<Tlv> for Keypair {
                 "Expected constructed TLV for keypair template",
             )),
             Value::Constructed(tlvs) => {
-                let mut keypair = Keypair::new();
+                let mut keypair = Keypair::default();
                 for tlv in tlvs {
                     let tag = tlv.tag();
 
                     if tag == &Tag::try_from(tags::ECC_PUBLIC_KEY)? {
-                        keypair.public_key = Some(PublicKey::from_sec1_bytes(
-                            &get_primitive_value(tag, &tlv)?,
-                        )?);
+                        keypair.public_key =
+                            Some(PublicKey::from_sec1_bytes(&get_primitive_value(tag, tlv)?)?);
                     } else if tag == &Tag::try_from(tags::ECC_PRIVATE_KEY)? {
                         keypair.private_key =
-                            Some(SecretKey::from_slice(&get_primitive_value(tag, &tlv)?)?);
+                            Some(SecretKey::from_slice(&get_primitive_value(tag, tlv)?)?);
                     } else if tag == &Tag::try_from(tags::CHAIN_CODE)? {
-                        keypair.chain_code = Some(get_primitive_value(tag, &tlv)?);
+                        keypair.chain_code = Some(get_primitive_value(tag, tlv)?);
                     }
                 }
                 Ok(keypair)

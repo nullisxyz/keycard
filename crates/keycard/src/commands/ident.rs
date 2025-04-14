@@ -25,7 +25,7 @@ apdu_pair! {
                 pub fn with_random_challenge() -> Self {
                     let mut rng = rand::rng();
                     let mut challenge = [0u8; 32];
-                    rng.fill_bytes(&mut challenge.as_mut_slice());
+                    rng.fill_bytes(&mut challenge);
                     Self::with_challenge(&challenge)
                 }
             }

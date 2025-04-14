@@ -1,7 +1,7 @@
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use nexum_apdu_transport_pcsc::{PcscConfig, PcscDeviceManager};
 use std::path::PathBuf;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 mod commands;
 mod utils;

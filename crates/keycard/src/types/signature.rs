@@ -61,10 +61,10 @@ impl TryFrom<&Tlv> for PublicKey {
         }
 
         let public_key = {
-            let value = get_primitive_value(&Tag::try_from(tags::ECC_PUBLIC_KEY)?, &tlv)?;
+            let value = get_primitive_value(&Tag::try_from(tags::ECC_PUBLIC_KEY)?, tlv)?;
             match value.len() {
                 0 => None,
-                65 => Some(k256::PublicKey::from_sec1_bytes(value.as_slice().into())?),
+                65 => Some(k256::PublicKey::from_sec1_bytes(value.as_slice())?),
                 _ => return Err(Self::Error::InvalidData("Invalid public key length")),
             }
         };

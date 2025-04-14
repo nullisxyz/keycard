@@ -97,14 +97,14 @@ impl KeycardSCP {
             }) => {
                 let key = {
                     let mut hasher = Sha256::new();
-                    Digest::update(&mut hasher, &shared_secret);
-                    Digest::update(&mut hasher, &salt);
+                    Digest::update(&mut hasher, shared_secret);
+                    Digest::update(&mut hasher, salt);
                     hasher.finalize()
                 };
                 (index, key)
             }
             Ok(PairOk::FirstStageSuccess { .. }) => unreachable!("Executed final stage"),
-            Err(err) => return Err(err.into()),
+            Err(err) => return Err(err),
         };
 
         debug!("Pairing successful with index {}", index);
@@ -170,7 +170,7 @@ impl KeycardSCP {
         let encrypted_data = encrypt_data(
             &mut data_to_encrypt,
             self.session.keys().enc(),
-            &self.session.iv(),
+            self.session.iv(),
         );
 
         // Prepare metadata for MAC calculation
@@ -182,7 +182,7 @@ impl KeycardSCP {
         meta[4] = (encrypted_data.len() + 16) as u8; // Add MAC size
 
         // Calculate the IV/MAC
-        self.session.update_iv(&meta.into(), &encrypted_data);
+        self.session.update_iv(&meta, &encrypted_data);
 
         // Combine MAC and encrypted data
         let mut data = BytesMut::with_capacity(16 + encrypted_data.len());
@@ -249,9 +249,9 @@ impl KeycardSCP {
             }
             None => {
                 warn!("Invalid response payload");
-                return Err(Error::SecureProtocol(SecureProtocolError::Protocol(
+                Err(Error::SecureProtocol(SecureProtocolError::Protocol(
                     "Invalid response payload",
-                )));
+                )))
             }
         }
     }
@@ -294,7 +294,7 @@ impl CommandProcessor for KeycardSCP {
     }
 
     fn security_level(&self) -> SecurityLevel {
-        self.security_level().clone()
+        *self.security_level()
     }
 }
 
@@ -316,7 +316,7 @@ impl SecureChannel for KeycardSCP {
     }
 
     fn current_security_level(&self) -> SecurityLevel {
-        self.security_level().clone()
+        *self.security_level()
     }
 }
 

@@ -28,9 +28,7 @@ impl TryFrom<Tlv> for ApplicationStatus {
         }
 
         match tlv.value() {
-            Value::Primitive(_) => {
-                return Err(Self::Error::InvalidData("TLV value was not constructed"));
-            }
+            Value::Primitive(_) => Err(Self::Error::InvalidData("TLV value was not constructed")),
             Value::Constructed(tlvs) => Ok(Self {
                 pin_retry_count: get_primitive_value(&Tag::try_from(tags::OTHER)?, &tlvs[0])?[0],
                 puk_retry_count: get_primitive_value(&Tag::try_from(tags::OTHER)?, &tlvs[1])?[0],

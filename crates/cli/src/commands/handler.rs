@@ -1,5 +1,5 @@
 use alloy::signers::Signer;
-use alloy_primitives::{U256, address, hex};
+use alloy_primitives::hex;
 use coins_bip32::path::DerivationPath;
 use nexum_apdu_core::CardExecutor;
 use nexum_apdu_transport_pcsc::{PcscDeviceManager, PcscTransport};
@@ -88,7 +88,7 @@ pub fn pair_command(
             println!("🔑 Pairing successful!");
             if let Some(pairing_info) = keycard.pairing_info() {
                 println!("\nPairing Information (SAVE THIS):");
-                println!("  Pairing key: {}", hex::encode(&pairing_info.key));
+                println!("  Pairing key: {}", hex::encode(pairing_info.key));
                 println!("  Pairing index: {}", pairing_info.index);
                 println!(
                     "\nYou can use these values with --key and --index options for future operations"
@@ -139,7 +139,7 @@ pub fn verify_pin_command(
     let (mut keycard, response) = session::initialize_keycard(transport)?;
 
     // Ensure secure channel is open
-    session::ensure_secure_channel(&mut keycard, &response, file, pairing_key, index.into())?;
+    session::ensure_secure_channel(&mut keycard, &response, file, pairing_key, index)?;
 
     // Verify PIN
     match keycard.verify_pin(|| pin.to_string()) {
@@ -197,7 +197,7 @@ pub async fn sign_command(
     data.copy_from_slice(&data_bytes[..32]);
 
     // Create key path based on provided path
-    let path_to_use = if let Some(path_str) = path {
+    let _path_to_use = if let Some(path_str) = path {
         let derivation_path = DerivationPath::try_from(path_str.as_str())?;
         KeyPath::FromCurrent(derivation_path)
     } else {

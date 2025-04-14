@@ -142,7 +142,7 @@ pub(crate) fn encrypt_data(
     let encrypted = Encryptor::new(enc_key, iv)
         .encrypt_padded_mut::<Iso7816>(data, msg_len)
         .unwrap();
-    Bytes::copy_from_slice(encrypted).into()
+    Bytes::copy_from_slice(encrypted)
 }
 
 /// Decrypt data using the provided key and IV assuming the data is padded in ISO 7816 format.

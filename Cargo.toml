@@ -8,7 +8,6 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["Nullis Contributors"]
 license = "AGPL-3.0-or-later"
-homepage = "https://nullisxyz.github.io/keycard"
 repository = "https://github.com/nullisxyz/keycard"
 keywords = ["smart-card", "cryptography", "iso7816", "apdu", "keycard"]
 categories = ["cryptography", "embedded", "hardware-support"]

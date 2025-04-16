@@ -9,7 +9,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xD3,
-            required_security_level: SecurityLevel::authenticated_mac(),
+            required_security_level: SecurityLevel::auth_mac(),
 
             builders {
                 /// Create a REMOVE KEY command

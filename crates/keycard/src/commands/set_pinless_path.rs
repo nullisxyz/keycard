@@ -11,7 +11,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xC1,
-            required_security_level: SecurityLevel::encrypted(),
+            required_security_level: SecurityLevel::auth_mac(),
 
             builders {
                 /// Create a SET PINLESS PATH command with the nominated path

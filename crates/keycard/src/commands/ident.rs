@@ -54,7 +54,7 @@ apdu_pair! {
                             signature: Signature::try_from(payload.as_ref())
                                 .map_err(|_| Error::ParseError("Unable to parse signature"))?,
                         }),
-                        None => Err(Error::ParseError("No payload data")),
+                        None => Err(Error::ParseError("No payload data"))?,
                     },
                     SW_WRONG_DATA => Err(IdentError::WrongData),
                     _ => Err(IdentError::Unknown { sw1: response.status().sw1, sw2: response.status().sw2 }),

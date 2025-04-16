@@ -17,7 +17,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xC2,
-            required_security_level: SecurityLevel::authenticated_encrypted(),
+            required_security_level: SecurityLevel::full(),
 
             builders {
                 /// Create an EXPORT KEY command

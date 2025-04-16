@@ -9,7 +9,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xD4,
-            required_security_level: SecurityLevel::encrypted(),
+            required_security_level: SecurityLevel::auth_mac(),
 
             builders {
                 /// Create a new GENERATE KEY command with default parameters
@@ -49,7 +49,7 @@ apdu_pair! {
                                 key_uid: payload.to_vec().try_into()
                                     .map_err(|_| Error::ParseError("Key UID was not 32 bytes long"))?,
                             }),
-                            None => Err(Error::ParseError("No payload in response")),
+                            None => Err(Error::ParseError("No payload in response"))?,
                         }
                     },
                     SW_SECURITY_STATUS_NOT_SATISFIED => Err(GenerateKeyError::SecurityStatusNotSatisfied),

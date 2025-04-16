@@ -1,6 +1,5 @@
 use coins_bip39::{MnemonicError, WordlistError};
 use iso7816_tlv::TlvError;
-use nexum_apdu_core::ApduExecutorErrors;
 use nexum_apdu_globalplatform::select::SelectError;
 
 use crate::commands::*;
@@ -11,29 +10,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Error type for Keycard operations
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Transport-related errors
+    /// Core error from nexum_apdu_core
     #[error(transparent)]
-    TransportError(#[from] nexum_apdu_core::transport::TransportError),
-
-    /// Command-related errors
-    #[error(transparent)]
-    Command(#[from] nexum_apdu_core::command::error::CommandError),
-
-    /// Response-related errors
-    #[error(transparent)]
-    Response(#[from] nexum_apdu_core::response::error::ResponseError),
-
-    /// Status errors (for status words)
-    #[error(transparent)]
-    Status(#[from] nexum_apdu_core::response::error::StatusError),
-
-    /// Processor-related errors
-    #[error(transparent)]
-    Processor(#[from] nexum_apdu_core::processor::ProcessorError),
-
-    /// Secure protocol related errors
-    #[error(transparent)]
-    SecureProtocol(#[from] nexum_apdu_core::processor::SecureProtocolError),
+    Core(#[from] nexum_apdu_core::error::Error),
 
     /// Secure channel not supported
     #[error("Secure channel not supported")]
@@ -167,8 +146,4 @@ impl From<TlvError> for Error {
     fn from(error: TlvError) -> Self {
         Error::TlvError(error)
     }
-}
-
-impl ApduExecutorErrors for Error {
-    type Error = Self;
 }

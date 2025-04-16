@@ -9,7 +9,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0x13,
-            required_security_level: SecurityLevel::authenticated_encrypted(),
+            required_security_level: SecurityLevel::auth_mac(),
 
             builders {
                 /// Create an UNPAIR for the nominated index

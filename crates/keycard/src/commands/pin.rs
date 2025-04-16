@@ -13,7 +13,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0x20,
-            required_security_level: SecurityLevel::encrypted(),
+            required_security_level: SecurityLevel::enc_mac(),
 
             builders {
                 /// Create a VERIFY PIN command with PIN
@@ -59,7 +59,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0x21,
-            required_security_level: SecurityLevel::authenticated_encrypted(),
+            required_security_level: SecurityLevel::full(),
 
             builders {
                 /// Create a CHANGE PIN command
@@ -112,7 +112,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0x22,
-            required_security_level: SecurityLevel::encrypted(),
+            required_security_level: SecurityLevel::enc_mac(),
 
             builders {
                 /// Create an UNBLOCK PIN command

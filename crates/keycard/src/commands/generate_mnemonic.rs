@@ -12,7 +12,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xD2,
-            required_security_level: SecurityLevel::encrypted(),
+            required_security_level: SecurityLevel::enc_mac(),
 
             builders {
                 /// Create a GENERATE MNEMONIC command with a given number of words (12, 15, 18, 21, 24)
@@ -31,7 +31,7 @@ apdu_pair! {
                 #[sw(SW_NO_ERROR)]
                 Success {
                     /// An array of u16 representing the mnemonic words
-                    words: Vec<u16>
+                    words: Vec<u8>
                 }
             }
 

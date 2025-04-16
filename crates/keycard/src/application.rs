@@ -9,14 +9,18 @@ use k256::ecdsa::RecoveryId;
 /// This module provides the main Keycard application interface, which
 /// encapsulates all the functionality for managing Keycards.
 use nexum_apdu_core::prelude::*;
+use nexum_apdu_core::error::Error as CoreError;
+use nexum_apdu_core::executor::SecureChannelExecutor;
+use nexum_apdu_core::executor::response_aware::ResponseAwareExecutor;
 use nexum_apdu_globalplatform::SelectCommand;
 use tracing::debug;
 
 use crate::commands::{
-    GenerateKeyCommand, GetStatusOk, InitCommand, KeyPath, SignCommand, VerifyPinCommand,
+    GenerateKeyCommand, GetStatusOk, InitCommand, KeyPath, SignCommand,
+    VerifyPinCommand, ChangePinCommand, UnblockPinCommand,
 };
 use crate::error::{Error, Result};
-use crate::secure_channel::{KeycardSCP, KeycardSecureChannelProvider};
+use crate::secure_channel::KeycardSCP;
 
 use crate::types::{ApplicationInfo, PairingInfo};
 use crate::{
@@ -27,26 +31,28 @@ use crate::{
 #[derive(Debug)]
 pub struct Keycard<E>
 where
-    E: Executor + SecureChannelExecutor,
+    E: Executor + SecureChannelExecutor + ResponseAwareExecutor,
 {
     /// Card executor
     executor: E,
-    /// Secure channel provider - optional to support unpaired states
-    secure_channel_provider: Option<KeycardSecureChannelProvider>,
+    /// Pairing information - optional to support unpaired states
+    pairing_info: Option<PairingInfo>,
+    /// Card public key - optional to support unpaired states
+    card_public_key: Option<k256::PublicKey>,
     /// Application info from card selection
     application_info: Option<ApplicationInfo>,
 }
 
 impl<E> Keycard<E>
 where
-    E: Executor + SecureChannelExecutor,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    E: Executor + SecureChannelExecutor + ResponseAwareExecutor,
 {
     /// Create a new Keycard instance
     pub fn new(executor: E) -> Self {
         Self {
             executor,
-            secure_channel_provider: None,
+            pairing_info: None,
+            card_public_key: None,
             application_info: None,
         }
     }
@@ -57,11 +63,10 @@ where
         pairing_info: PairingInfo,
         card_public_key: k256::PublicKey,
     ) -> Self {
-        let provider = KeycardSecureChannelProvider::new(pairing_info, card_public_key);
-
         Self {
             executor,
-            secure_channel_provider: Some(provider),
+            pairing_info: Some(pairing_info),
+            card_public_key: Some(card_public_key),
             application_info: None,
         }
     }
@@ -79,12 +84,13 @@ where
         let result = self.executor.execute(&cmd)?;
 
         let app_select_response = ParsedSelectOk::try_from(result).map_err(|_| {
-            Error::Response(nexum_apdu_core::response::error::ResponseError::Parse(
-                "Unable to parse response",
-            ))
+            Error::Core(CoreError::ParseError("Unable to parse response"))
         })?;
         if let ParsedSelectOk::ApplicationInfo(application_info) = &app_select_response {
             self.application_info = Some(application_info.clone());
+            if let Some(public_key) = application_info.public_key {
+                self.card_public_key = Some(public_key);
+            }
         }
 
         Ok(app_select_response)
@@ -120,35 +126,17 @@ where
     where
         F: FnOnce() -> String,
     {
-        let pairing_info = KeycardSCP::pair(&mut self.executor, pairing_pass)?;
+        // Get the card transport from the executor
+        let transport = self.executor.transport_mut();
+        
+        // Use pair method with explicit type parameters to resolve type issues
+        let pairing_info = KeycardSCP::<E::Transport>::pair(transport, pairing_pass)
+            .map_err(|e| Error::Core(e))?;
 
         // Store pairing info for future secure channel establishment
-        if let Some(app_info) = &self.application_info {
-            if let Some(public_key) = &app_info.public_key {
-                self.secure_channel_provider = Some(KeycardSecureChannelProvider::new(
-                    pairing_info.clone(),
-                    *public_key,
-                ));
-            }
-        }
-
+        self.pairing_info = Some(pairing_info.clone());
+        
         Ok(pairing_info)
-    }
-
-    /// Open secure channel using current pairing information
-    pub fn open_secure_channel(&mut self) -> Result<()> {
-        if self.secure_channel_provider.is_none() {
-            return Err(Error::SecureProtocol(
-                nexum_apdu_core::processor::SecureProtocolError::Other(
-                    "No pairing information provided".to_string(),
-                ),
-            ));
-        }
-
-        let provider = self.secure_channel_provider.as_ref().unwrap();
-        self.executor.open_secure_channel(provider)?;
-
-        Ok(())
     }
 
     /// Get application status
@@ -171,8 +159,8 @@ where
         F: FnOnce() -> String,
     {
         // Create and execute the command
-        // The command's required_security_level will be automatically enforced by executor
-        let cmd = VerifyPinCommand::with_pin(&pin());
+        let pin_str = pin();
+        let cmd = VerifyPinCommand::with_pin(&pin_str);
         let _ = self.executor.execute(&cmd)?;
 
         Ok(())
@@ -236,34 +224,14 @@ where
         &mut self.executor
     }
 
-    /// Check if PIN is verified
-    pub fn is_pin_verified(&self) -> bool {
-        // Implementation depends on your internal security state tracking
-        self.security_level().is_authenticated()
-    }
-
-    /// Check if secure channel is open
-    pub fn is_secure_channel_open(&self) -> bool {
-        self.executor.has_secure_channel()
-    }
-
     /// Set or update pairing information
     pub fn set_pairing_info(&mut self, pairing_info: PairingInfo) {
-        // Implementation depends on the actual state storage
-        // This is just an example:
-        if let Some(app_info) = &self.application_info {
-            if let Some(public_key) = app_info.public_key {
-                self.secure_channel_provider =
-                    Some(KeycardSecureChannelProvider::new(pairing_info, public_key));
-            }
-        }
+        self.pairing_info = Some(pairing_info);
     }
 
     /// Get current pairing information
     pub fn pairing_info(&self) -> Option<&PairingInfo> {
-        self.secure_channel_provider
-            .as_ref()
-            .map(|provider| provider.pairing_info())
+        self.pairing_info.as_ref()
     }
 
     /// Change credential (PIN, PUK, or pairing secret)
@@ -275,18 +243,13 @@ where
     where
         S: AsRef<str>,
     {
-        use crate::commands::ChangePinCommand;
-
-        let cmd = match credential_type {
-            CredentialType::Pin => ChangePinCommand::with_pin(new_value.as_ref()),
-            CredentialType::Puk => ChangePinCommand::with_puk(new_value.as_ref()),
+        match credential_type {
+            CredentialType::Pin => self.change_pin(new_value.as_ref()),
+            CredentialType::Puk => self.change_puk(new_value.as_ref()),
             CredentialType::PairingSecret => {
-                ChangePinCommand::with_pairing_secret(new_value.as_ref().as_bytes())
+                self.change_pairing_secret(new_value.as_ref().as_bytes())
             }
-        };
-
-        self.executor.execute(&cmd)?;
-        Ok(())
+        }
     }
 
     /// Unblock PIN using PUK
@@ -295,9 +258,9 @@ where
         S1: AsRef<str>,
         S2: AsRef<str>,
     {
-        use crate::commands::UnblockPinCommand;
-
-        let cmd = UnblockPinCommand::with_puk_and_new_pin(puk.as_ref(), new_pin.as_ref());
+        let puk_str = puk.as_ref();
+        let pin_str = new_pin.as_ref();
+        let cmd = UnblockPinCommand::with_puk_and_new_pin(puk_str, pin_str);
         self.executor.execute(&cmd)?;
         Ok(())
     }
@@ -311,15 +274,8 @@ where
         Ok(())
     }
 
-    /// Get security level for authentication status
-    fn security_level(&self) -> SecurityLevel {
-        // You might want to track this internally or ask the executor
-        self.executor.security_level()
-    }
-
     /// Change PIN
     pub fn change_pin(&mut self, new_pin: &str) -> Result<()> {
-        use crate::commands::ChangePinCommand;
         let cmd = ChangePinCommand::with_pin(new_pin);
         self.executor.execute(&cmd)?;
         Ok(())
@@ -327,7 +283,6 @@ where
 
     /// Change PUK
     pub fn change_puk(&mut self, new_puk: &str) -> Result<()> {
-        use crate::commands::ChangePinCommand;
         let cmd = ChangePinCommand::with_puk(new_puk);
         self.executor.execute(&cmd)?;
         Ok(())
@@ -335,7 +290,6 @@ where
 
     /// Change pairing secret
     pub fn change_pairing_secret(&mut self, new_secret: &[u8]) -> Result<()> {
-        use crate::commands::ChangePinCommand;
         let cmd = ChangePinCommand::with_pairing_secret(new_secret);
         self.executor.execute(&cmd)?;
         Ok(())
@@ -356,7 +310,10 @@ where
 
 /// Enum for credential types that can be changed
 pub enum CredentialType {
+    /// PIN code
     Pin,
+    /// PUK code
     Puk,
+    /// Pairing secret
     PairingSecret,
 }

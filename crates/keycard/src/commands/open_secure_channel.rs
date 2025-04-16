@@ -28,7 +28,7 @@ apdu_pair! {
                 #[sw(SW_NO_ERROR)]
                 Success {
                     challenge: Challenge,
-                    salt: Iv::<KeycardScp>,
+                    iv: Iv::<KeycardScp>,
                 },
             }
 
@@ -55,13 +55,13 @@ apdu_pair! {
                         match response.payload() {
                             Some(payload) => {
                                 if payload.len() != std::mem::size_of::<Challenge>() + std::mem::size_of::<Iv<KeycardScp>>() {
-                                    return Err(Error::ParseError("Invalid payload length"));
+                                    return Err(Error::ParseError("Invalid payload length"))?;
                                 }
                                 let challenge = Challenge::from_slice(&payload[..std::mem::size_of::<Challenge>()]);
-                                let salt = Iv::<KeycardScp>::from_slice(&payload[std::mem::size_of::<Challenge>()..]);
-                                Ok(OpenSecureChannelOk::Success { challenge: *challenge, salt: *salt })
+                                let iv = Iv::<KeycardScp>::from_slice(&payload[std::mem::size_of::<Challenge>()..]);
+                                Ok(OpenSecureChannelOk::Success { challenge: *challenge, iv: *iv })
                             }
-                            None => Err(Error::ParseError("No payload")),
+                            None => Err(Error::ParseError("No payload"))?,
                         }
                     }
                     SW_INCORRECT_P1P2 => Err(OpenSecureChannelError::IncorrectP1P2),

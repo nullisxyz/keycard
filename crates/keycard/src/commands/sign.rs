@@ -11,7 +11,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xC0,
-            required_security_level: SecurityLevel::encrypted(),
+            required_security_level: SecurityLevel::auth_mac(),
 
             builders {
                 /// Create a SIGN command
@@ -76,7 +76,7 @@ apdu_pair! {
                             signature: Signature::try_from(payload.as_ref())
                                 .map_err(|_| Error::ParseError("Unable to parse signature"))?,
                         }),
-                        None => Err(Error::ParseError("No payload data")),
+                        None => Err(Error::ParseError("No payload data"))?,
                     },
                     SW_CONDITIONS_NOT_SATISFIED => Err(SignError::ConditionsNotSatisfied),
                     SW_WRONG_DATA => Err(SignError::WrongData),

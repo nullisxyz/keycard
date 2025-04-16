@@ -86,7 +86,7 @@ apdu_pair! {
                             }
                         }
 
-                        Err(Error::ParseError("Invalid payload length"))
+                        Err(Error::ParseError("Invalid payload length"))?
                     },
                     SW_SECURITY_STATUS_NOT_SATISFIED => Err(PairError::SecurityStatusNotSatisfied),
                     SW_FILE_FULL => Err(PairError::FileFull),

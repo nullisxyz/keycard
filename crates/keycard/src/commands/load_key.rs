@@ -13,7 +13,7 @@ apdu_pair! {
         command {
             cla: CLA_GP,
             ins: 0xD0,
-            required_security_level: SecurityLevel::authenticated_encrypted(),
+            required_security_level: SecurityLevel::full(),
 
             builders {
                 /// Create a LOAD KEY command for loading an ECC secp256k1 keypair
@@ -80,7 +80,7 @@ apdu_pair! {
                                 key_uid: payload.to_vec().try_into()
                                     .map_err(|_| Error::ParseError("Unable to parse key UID"))?,
                             }),
-                            None => Err(Error::ParseError("No payload received")),
+                            None => Err(Error::ParseError("No payload received"))?,
                         }
                     },
                     SW_WRONG_DATA => Err(LoadKeyError::WrongData),

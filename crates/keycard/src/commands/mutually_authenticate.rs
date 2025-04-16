@@ -49,12 +49,12 @@ apdu_pair! {
                             Some(payload) => {
                                 // Have to check the length here as the `from_slice` will panic otherwise
                                 if payload.len() != 32 {
-                                    return Err(Error::ParseError("Invalid payload length"));
+                                    return Err(Error::ParseError("Invalid payload length"))?;
                                 }
                                 let cryptogram = Cryptogram::from_slice(payload);
                                 Ok(MutuallyAuthenticateOk::Success { cryptogram: *cryptogram })
                             },
-                            None => Err(Error::ParseError("No payload")),
+                            None => Err(Error::ParseError("No payload"))?,
                         }
                     },
                     SW_CONDITIONS_NOT_SATISFIED => Err(MutuallyAuthenticateError::ConditionsNotSatisfied),

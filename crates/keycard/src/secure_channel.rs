@@ -1,22 +1,30 @@
+use std::fmt;
+
 use alloy_primitives::hex::encode;
 use bytes::{Bytes, BytesMut};
-use generic_array::GenericArray;
-use k256::PublicKey;
-use nexum_apdu_core::prelude::*;
-use rand_v8::{RngCore, thread_rng};
+use k256::elliptic_curve::generic_array::GenericArray;
+use nexum_apdu_core::error::Error;
+use nexum_apdu_core::secure_channel::{SecureChannel, SecurityLevel};
+use nexum_apdu_core::transport::CardTransport;
+use nexum_apdu_core::{ApduCommand, Executor};
+use nexum_apdu_core::{Command, Response};
+use rand::{RngCore, rng};
 use sha2::{Digest, Sha256};
-use std::fmt;
 use tracing::{debug, trace, warn};
 
-use crate::{
-    MutuallyAuthenticateOk, PairOk, PairingInfo,
-    commands::{MutuallyAuthenticateCommand, PairCommand, pin},
-    crypto::{Challenge, calculate_cryptogram, decrypt_data, encrypt_data, generate_pairing_token},
-    session::Session,
-};
+use crate::commands::mutually_authenticate::MutuallyAuthenticateCommand;
+use crate::commands::pin::VerifyPinCommand;
+use crate::crypto::{calculate_cryptogram, decrypt_data, encrypt_data, generate_pairing_token};
+use crate::session::Session;
+use crate::types::PairingInfo;
+use crate::{Challenge, MutuallyAuthenticateOk, PairCommand, PairOk};
 
-/// Represents a secure communication channel with a Keycard
-#[derive(Clone)]
+/// Type for function that provides a PIN
+pub type PinRequestFn = Box<dyn Fn() -> String + Send + Sync>;
+/// Type for function that confirms operations
+pub type ConfirmationFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Secure Channel Protocol implementation for Keycard
 pub struct KeycardSCP<T: CardTransport> {
     /// The underlying transport
     transport: T,
@@ -26,6 +34,10 @@ pub struct KeycardSCP<T: CardTransport> {
     security_level: SecurityLevel,
     /// Whether the secure channel is established
     established: bool,
+    /// Optional callback for requesting PIN
+    pin_request_callback: Option<PinRequestFn>,
+    /// Optional callback for confirming critical operations
+    confirmation_callback: Option<ConfirmationFn>,
 }
 
 impl<T: CardTransport> fmt::Debug for KeycardSCP<T> {
@@ -34,6 +46,11 @@ impl<T: CardTransport> fmt::Debug for KeycardSCP<T> {
             .field("security_level", &self.security_level)
             .field("established", &self.established)
             .field("session_initialized", &self.session.is_some())
+            .field("has_pin_callback", &self.pin_request_callback.is_some())
+            .field(
+                "has_confirm_callback",
+                &self.confirmation_callback.is_some(),
+            )
             .finish()
     }
 }
@@ -47,14 +64,34 @@ impl<T: CardTransport> KeycardSCP<T> {
             session: None,
             security_level: SecurityLevel::none(),
             established: false,
+            pin_request_callback: None,
+            confirmation_callback: None,
         }
+    }
+
+    /// Set the callback for requesting PIN
+    pub fn with_pin_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn() -> String + Send + Sync + 'static,
+    {
+        self.pin_request_callback = Some(Box::new(callback));
+        self
+    }
+
+    /// Set the callback for confirming critical operations
+    pub fn with_confirmation_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        self.confirmation_callback = Some(Box::new(callback));
+        self
     }
 
     /// Initialize the session for this secure channel using existing pairing info and public key
     /// This prepares the session but does not establish the secure channel yet
     pub fn initialize_session(
         &mut self,
-        card_public_key: &PublicKey,
+        card_public_key: &k256::PublicKey,
         pairing_info: &PairingInfo,
     ) -> crate::Result<()> {
         // Create a new session
@@ -66,29 +103,26 @@ impl<T: CardTransport> KeycardSCP<T> {
         Ok(())
     }
 
-    /// Pair with the card using the provided pairing password
-    /// This is a static method that can be called without an established channel
-    pub fn pair<F>(
-        transport: &mut impl CardTransport,
-        pairing_pass: F,
-    ) -> crate::Result<PairingInfo>
+    /// Pair the card and initialize the secure channel
+    /// This is a complete process to pair with a card
+    pub fn pair<E>(&mut self, pairing_secret: &str) -> crate::Result<PairingInfo>
     where
-        F: FnOnce() -> String,
+        E: Executor,
     {
         debug!("Starting pairing process with pairing password");
 
         // Determine the shared secret
-        let shared_secret = generate_pairing_token(&pairing_pass());
+        let shared_secret = generate_pairing_token(&pairing_secret);
 
         // Generate a random challenge
         let mut challenge = Challenge::default();
-        thread_rng().fill_bytes(&mut challenge);
+        rng().fill_bytes(&mut challenge);
 
         // Create PAIR (first step) command
         let cmd = PairCommand::with_first_stage(&challenge);
 
         // Send the command through the transport
-        let response_bytes = transport.transmit_raw(&cmd.to_command().to_bytes())?;
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
         match PairCommand::parse_response_raw(response_bytes) {
             Ok(PairOk::FirstStageSuccess {
                 cryptogram: card_cryptogram,
@@ -104,7 +138,7 @@ impl<T: CardTransport> KeycardSCP<T> {
                 let cmd = PairCommand::with_final_stage(&client_cryptogram);
 
                 // Send the command through the transport
-                let response_bytes = transport.transmit_raw(&cmd.to_command().to_bytes())?;
+                let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
                 match PairCommand::parse_response_raw(response_bytes) {
                     Ok(PairOk::FinalStageSuccess {
                         pairing_index,
@@ -131,26 +165,45 @@ impl<T: CardTransport> KeycardSCP<T> {
         }
     }
 
-    /// Verify PIN and upgrade security level
-    pub fn verify_pin<E, F>(&mut self, executor: &mut E, pin: F) -> crate::Result<()>
+    /// Verify PIN using the PIN request callback if available
+    pub fn verify_pin<E>(&mut self, executor: &mut E) -> crate::Result<bool>
     where
         E: Executor,
-        F: FnOnce() -> String,
     {
         if !self.is_established() {
-            return Err(Error::SecureChannelNotEstablished)?;
+            return Err(Error::other("Secure channel not established").into());
         }
 
-        // Create the command
-        let cmd = pin::VerifyPinCommand::with_pin(&pin());
+        // Check if we have a PIN callback
+        if let Some(pin_fn) = &self.pin_request_callback {
+            // Get the PIN from the callback
+            let pin = pin_fn();
 
-        // Execute the command
-        executor.execute(&cmd)?;
+            // Create the command
+            let cmd = VerifyPinCommand::with_pin(&pin);
 
-        // At this point, it is guaranteed that the PIN was verified successfully.
-        self.security_level = SecurityLevel::full();
+            // Execute the command
+            executor.execute(&cmd)?;
 
-        Ok(())
+            // At this point, it's guaranteed that the PIN was verified successfully
+            self.security_level = SecurityLevel::full();
+
+            Ok(true)
+        } else {
+            // No PIN callback available
+            Err(Error::other("No PIN callback configured").into())
+        }
+    }
+
+    /// Confirm a critical operation using the confirmation callback if available
+    pub fn confirm_operation(&self, operation_description: &str) -> crate::Result<bool> {
+        if let Some(confirm_fn) = &self.confirmation_callback {
+            // Ask for confirmation using the callback
+            Ok(confirm_fn(operation_description))
+        } else {
+            // No confirmation callback available, assume confirmed
+            Ok(true)
+        }
     }
 
     /// Encrypt APDU command data for the secure channel
@@ -178,7 +231,7 @@ impl<T: CardTransport> KeycardSCP<T> {
         meta[3] = command.p2();
         meta[4] = (encrypted_data.len() + 16) as u8; // Add MAC size
 
-        // Calculate the IV/MAC
+        // Update session IV / calculate MAC
         let encrypted_bytes_copy = Bytes::copy_from_slice(&encrypted_data);
         session.update_iv(&meta, &encrypted_bytes_copy);
 
@@ -201,7 +254,7 @@ impl<T: CardTransport> KeycardSCP<T> {
         Ok(protected_command.to_bytes().to_vec())
     }
 
-    /// Process APDU response data from the secure channel
+    /// Process response data from the secure channel
     /// This method assumes the secure channel is established and session is initialized
     fn process_response(&mut self, response: &[u8]) -> crate::Result<Bytes> {
         // Parse the response
@@ -266,13 +319,13 @@ impl<T: CardTransport> KeycardSCP<T> {
         }
     }
 
-    /// Perform mutual authentication to establish secure channel
+    /// Perform mutual authentication to establish the secure channel
     fn authenticate(&mut self) -> crate::Result<()> {
         debug!("Starting mutual authentication process");
 
         // Generate a random challenge
         let mut challenge = Challenge::default();
-        thread_rng().fill_bytes(&mut challenge);
+        rng().fill_bytes(&mut challenge);
 
         // Create the command
         let cmd = MutuallyAuthenticateCommand::with_challenge(&challenge);
@@ -320,7 +373,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
 
         // Check if session has been initialized
         if self.session.is_none() {
-            return Err(Error::message(
+            return Err(Error::other(
                 "Session not initialized. Call initialize_session() first",
             ));
         }
@@ -356,7 +409,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         );
 
         if !self.is_established() {
-            return Err(Error::SecureChannelNotEstablished);
+            return Err(Error::other("Secure channel not established"));
         }
 
         // Check if we're already at or above the required level
@@ -365,10 +418,10 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         }
 
         // For Keycard SCP, we only support upgrading to authentication through PIN verification
-        // which is handled separately via verify_pin method
+        // which is now handled through the PIN callback
         if level.authentication && !self.security_level.authentication {
-            return Err(Error::message(
-                "Authentication upgrade must be done with verify_pin".to_string(),
+            return Err(Error::other(
+                "Authentication upgrade must be done with verify_pin",
             ));
         }
 
@@ -407,11 +460,6 @@ impl<T: CardTransport> CardTransport for KeycardSCP<T> {
     }
 
     fn reset(&mut self) -> Result<(), Error> {
-        // Close the channel if it's open
-        if self.is_established() {
-            self.close()?;
-        }
-
         // Reset the underlying transport
         self.transport.reset()
     }
@@ -442,7 +490,7 @@ mod tests {
             Iv::<KeycardScp>::from_slice(&iv),
         );
 
-        // Create a mock transport
+        // Mock transport that returns predefined responses
         #[derive(Debug)]
         struct MockTransport;
         impl CardTransport for MockTransport {
@@ -460,6 +508,8 @@ mod tests {
             session: Some(session),
             security_level: SecurityLevel::enc_mac(),
             established: true,
+            confirmation_callback: None,
+            pin_request_callback: None,
         };
 
         // Create the same command as in the Go test

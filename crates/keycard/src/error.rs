@@ -120,6 +120,10 @@ pub enum Error {
     #[error("Invalid derivation arguments: {0}")]
     InvalidDerivationArguments(String),
     
+    /// Operation cancelled by user
+    #[error("Operation cancelled by user")]
+    UserCancelled,
+    
     //
     // Command-specific errors
     //

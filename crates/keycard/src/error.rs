@@ -96,6 +96,10 @@ pub enum Error {
     #[error("Pairing failed")]
     PairingFailed,
     
+    /// Pairing information required
+    #[error("Pairing information required")]
+    PairingRequired,
+    
     /// Mutual authentication failed
     #[error("Mutual authentication failed")]
     MutualAuthenticationFailed,

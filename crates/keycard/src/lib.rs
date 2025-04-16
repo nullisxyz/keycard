@@ -10,13 +10,12 @@ mod types;
 
 pub use application::Keycard;
 pub use commands::*;
+pub use constants::*;
 pub use crypto::Challenge;
-pub use error::{Error, Result, ResultExt, CoreResultExt, GpResultExt};
+pub use error::{CoreResultExt, Error, GpResultExt, Result, ResultExt};
 pub use secrets::Secrets;
 pub use secure_channel::KeycardSCP;
 pub use types::{ApplicationInfo, ApplicationStatus, Keypair, PairingInfo, PublicKey};
-
-pub use constants::*;
 
 /// Represents the version of the applet protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

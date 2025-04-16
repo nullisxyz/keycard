@@ -2,30 +2,28 @@ use std::sync::Arc;
 
 use alloy_consensus::SignableTransaction;
 use alloy_network::{AnyNetwork, EthereumWallet, IntoWallet};
-use alloy_primitives::{Address, B256, ChainId, Signature, address};
-use alloy_signer::{Result, Signer, sign_transaction_with_chain_id};
+use alloy_primitives::{address, Address, ChainId, Signature, B256};
+use alloy_signer::{sign_transaction_with_chain_id, Result, Signer};
 use async_trait::async_trait;
-use nexum_apdu_core::{ApduExecutorErrors, Executor, SecureChannelExecutor};
-use nexum_keycard::{Error, KeyPath, Keycard};
+use nexum_apdu_core::prelude::*;
+use nexum_keycard::{KeyPath, Keycard, KeycardSCP};
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
-pub struct KeycardSigner<E>
+pub struct KeycardSigner<T>
 where
-    E: Executor + SecureChannelExecutor,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    T: CardTransport,
 {
-    inner: Arc<Mutex<Keycard<E>>>,
+    inner: Arc<Mutex<Keycard<KeycardSCP<T>>>>,
     pub(crate) chain_id: Option<ChainId>,
     pub(crate) address: Address,
 }
 
-impl<E> KeycardSigner<E>
+impl<T> KeycardSigner<T>
 where
-    E: Executor + SecureChannelExecutor,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    T: CardTransport,
 {
-    pub fn new(keycard: Arc<Mutex<Keycard<E>>>) -> Self {
+    pub fn new(keycard: Arc<Mutex<Keycard<KeycardSCP<T>>>>) -> Self {
         let address = address!("0xf888b1c80d40c08e53e4f3446ae2dac72fe0f31c");
         Self {
             inner: keycard,
@@ -36,10 +34,9 @@ where
 }
 
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
-impl<E> Signer for KeycardSigner<E>
+impl<T> Signer for KeycardSigner<T>
 where
-    E: Executor + SecureChannelExecutor,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    T: CardTransport,
 {
     #[inline]
     async fn sign_hash(&self, data: &B256) -> Result<Signature> {
@@ -67,10 +64,9 @@ where
 }
 
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
-impl<E> alloy_network::TxSigner<Signature> for KeycardSigner<E>
+impl<T> alloy_network::TxSigner<Signature> for KeycardSigner<T>
 where
-    E: Executor + SecureChannelExecutor,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    T: CardTransport,
 {
     fn address(&self) -> Address {
         self.address
@@ -85,10 +81,9 @@ where
     }
 }
 
-impl<E> IntoWallet for KeycardSigner<E>
+impl<T> IntoWallet for KeycardSigner<T>
 where
-    E: Executor + SecureChannelExecutor + 'static,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    T: CardTransport + 'static,
 {
     type NetworkWallet = EthereumWallet;
 
@@ -97,10 +92,9 @@ where
     }
 }
 
-impl<E> IntoWallet<AnyNetwork> for KeycardSigner<E>
+impl<T> IntoWallet<AnyNetwork> for KeycardSigner<T>
 where
-    E: Executor + SecureChannelExecutor + 'static,
-    Error: From<<E as ApduExecutorErrors>::Error>,
+    T: CardTransport + 'static,
 {
     type NetworkWallet = EthereumWallet;
 

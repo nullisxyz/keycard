@@ -42,7 +42,9 @@ impl<T: CardTransport> fmt::Debug for KeycardSCP<T> {
 
 impl<T: CardTransport> KeycardSCP<T> {
     /// Create a new secure channel instance
-    pub fn new(
+
+    /// Initialize a secure channel with existing pairing info and public key
+    pub fn initialize(
         mut transport: T,
         card_public_key: PublicKey,
         pairing_info: PairingInfo,

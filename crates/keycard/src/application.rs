@@ -10,31 +10,28 @@ use k256::ecdsa::RecoveryId;
 /// encapsulates all the functionality for managing Keycards.
 use nexum_apdu_core::prelude::*;
 
-use nexum_apdu_core::executor::SecureChannelExecutor;
-use nexum_apdu_core::executor::response_aware::ResponseAwareExecutor;
+use nexum_apdu_core::response::Response;
 use nexum_apdu_globalplatform::SelectCommand;
 use tracing::debug;
 
 use crate::commands::{
-    GenerateKeyCommand, GetStatusOk, InitCommand, KeyPath, SignCommand,
-    VerifyPinCommand, ChangePinCommand, UnblockPinCommand,
+    select::ParsedSelectOk, ChangePinCommand, GenerateKeyCommand, GetStatusOk, InitCommand,
+    KeyPath, SignCommand, UnblockPinCommand, VerifyPinCommand,
 };
-use crate::{Error, Result};
 use crate::secure_channel::KeycardSCP;
+use crate::{Error, Result};
 
 use crate::types::{ApplicationInfo, PairingInfo};
-use crate::{
-    ApplicationStatus, GenerateKeyOk, InitOk, KEYCARD_AID, ParsedSelectOk, Secrets, SignOk,
-};
+use crate::{ApplicationStatus, GenerateKeyOk, InitOk, Secrets, SignOk, KEYCARD_AID};
+
+/// Type alias for a secure channel transport
+pub type SecureTransport<T> = KeycardSCP<T>;
 
 /// Keycard card management application
 #[derive(Debug)]
-pub struct Keycard<E>
-where
-    E: Executor + SecureChannelExecutor + ResponseAwareExecutor,
-{
-    /// Card executor
-    executor: E,
+pub struct Keycard<T: CardTransport> {
+    /// Card transport
+    transport: T,
     /// Pairing information - optional to support unpaired states
     pairing_info: Option<PairingInfo>,
     /// Card public key - optional to support unpaired states
@@ -43,14 +40,12 @@ where
     application_info: Option<ApplicationInfo>,
 }
 
-impl<E> Keycard<E>
-where
-    E: Executor + SecureChannelExecutor + ResponseAwareExecutor,
-{
+// Base implementation for any transport
+impl<T: CardTransport> Keycard<T> {
     /// Create a new Keycard instance
-    pub fn new(executor: E) -> Self {
+    pub fn new(transport: T) -> Self {
         Self {
-            executor,
+            transport,
             pairing_info: None,
             card_public_key: None,
             application_info: None,
@@ -59,16 +54,36 @@ where
 
     /// Create a new Keycard instance with existing pairing information
     pub fn with_pairing(
-        executor: E,
+        transport: T,
         pairing_info: PairingInfo,
         card_public_key: k256::PublicKey,
     ) -> Self {
         Self {
-            executor,
+            transport,
             pairing_info: Some(pairing_info),
             card_public_key: Some(card_public_key),
             application_info: None,
         }
+    }
+
+    /// Get access to the transport
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    /// Get mutable access to the transport
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+
+    /// Set or update pairing information
+    pub fn set_pairing_info(&mut self, pairing_info: PairingInfo) {
+        self.pairing_info = Some(pairing_info);
+    }
+
+    /// Get current pairing information
+    pub fn pairing_info(&self) -> Option<&PairingInfo> {
+        self.pairing_info.as_ref()
     }
 
     /// Select Keycard
@@ -81,16 +96,19 @@ where
         // Create SELECT command
         debug!("Selecting application: {:?}", aid);
         let cmd = SelectCommand::with_aid(aid.to_vec());
-        
-        // Execute the command
-        // This takes advantage of any secure channel protection if present
-        let typed_result = self.executor.execute(&cmd)
-            .map_err(Error::from)?;
-        
-        // Convert to our custom response type - still needed for our app-specific logic
-        let app_select_response = ParsedSelectOk::try_from(typed_result)
+
+        // Send the command through the transport directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse the response manually
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse response bytes")))?;
+
+        // Parse with SelectCommand and then convert to our custom response type
+        let select_ok = SelectCommand::parse_response(response).map_err(Error::from)?;
+        let app_select_response = ParsedSelectOk::try_from(select_ok)
             .map_err(|_| Error::InvalidData("Unable to parse response"))?;
-            
+
         if let ParsedSelectOk::ApplicationInfo(application_info) = &app_select_response {
             self.application_info = Some(application_info.clone());
             if let Some(public_key) = application_info.public_key {
@@ -116,10 +134,18 @@ where
         match select_response {
             ParsedSelectOk::PreInitialized(pre) => {
                 let card_pubkey = pre.ok_or(Error::SecureChannelNotSupported)?;
-                
+
                 let cmd = InitCommand::with_card_pubkey_and_secrets(card_pubkey, secrets);
 
-                Ok(self.executor.execute(&cmd)?)
+                // Send the command through the transport directly
+                let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+                // Parse the response
+                let response = Response::from_bytes(&response_bytes)
+                    .map_err(|e| Error::from(e.with_context("Failed to parse INIT response")))?;
+
+                // Parse the initialization response
+                InitCommand::parse_response(response).map_err(Error::from)
             }
             _ => Err(Error::AlreadyInitialized),
         }
@@ -130,16 +156,91 @@ where
     where
         F: FnOnce() -> String,
     {
-        // Get the card transport from the executor
-        let transport = self.executor.transport_mut();
-        
-        // Use pair method with explicit type parameters to resolve type issues
-        let pairing_info = KeycardSCP::<E::Transport>::pair(transport, pairing_pass)?;
+        // Use pair method directly with our transport
+        let pairing_info = KeycardSCP::<T>::pair(&mut self.transport, pairing_pass)?;
 
         // Store pairing info for future secure channel establishment
         self.pairing_info = Some(pairing_info.clone());
-        
+
         Ok(pairing_info)
+    }
+
+    /// Create a secure Keycard that uses a KeycardSCP transport
+    pub fn into_secure_channel(self) -> Result<Keycard<SecureTransport<T>>>
+    where
+        T: Clone,
+    {
+        if self.pairing_info.is_none() {
+            return Err(Error::PairingRequired);
+        }
+
+        if self.card_public_key.is_none() {
+            return Err(Error::InvalidData(
+                "Card public key is required for secure channel",
+            ));
+        }
+
+        // Get the card public key and pairing info
+        let card_public_key = self.card_public_key.unwrap();
+        let pairing_info = self.pairing_info.unwrap();
+
+        // Initialize a secure channel with the transport and pairing info
+        let secure_transport =
+            SecureTransport::initialize(self.transport, card_public_key, pairing_info.clone())?;
+
+        // Create the new keycard
+        let mut secure_keycard = Keycard::new(secure_transport);
+
+        // Copy over state
+        secure_keycard.pairing_info = Some(pairing_info);
+        secure_keycard.card_public_key = Some(card_public_key);
+        secure_keycard.application_info = self.application_info;
+
+        Ok(secure_keycard)
+    }
+}
+
+/// Implementation for KeycardSCP transport
+impl<T: CardTransport> Keycard<SecureTransport<T>> {
+    /// Check if secure channel is open
+    pub fn is_secure_channel_open(&self) -> bool {
+        self.transport.is_established()
+    }
+
+    /// Open a secure channel with the card
+    pub fn open_secure_channel(&mut self) -> Result<()> {
+        // The secure channel should already be initialized
+        // Just call the open method on the transport
+        self.transport.open().map_err(Error::from)
+    }
+
+    /// Check if PIN has been verified in this session
+    pub fn is_pin_verified(&self) -> bool {
+        // This would need to track PIN verification state
+        // For now, we assume PIN is not verified by default
+        false
+    }
+
+    /// Verify PIN
+    pub fn verify_pin<F>(&mut self, pin: F) -> crate::Result<()>
+    where
+        F: FnOnce() -> String,
+    {
+        // Create the command
+        let pin_str = pin();
+        let cmd = VerifyPinCommand::with_pin(&pin_str);
+
+        // Send command directly through the transport
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse verify PIN response")))?;
+
+        // Handle the response
+        VerifyPinCommand::parse_response(response).map_err(Error::from)?;
+
+        Ok(())
     }
 
     /// Get application status
@@ -148,44 +249,50 @@ where
         use crate::commands::get_status::GetStatusCommand;
 
         let cmd = GetStatusCommand::application();
-        let response = self.executor.execute(&cmd)
-            .map_err(Error::from)?;
 
-        match response {
+        // Send command directly through the transport
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse get status response")))?;
+
+        // Handle the response
+        let result = GetStatusCommand::parse_response(response).map_err(Error::from)?;
+
+        match result {
             GetStatusOk::ApplicationStatus { status } => Ok(status),
             // This branch should be unreachable if we requested application status,
             // but using a proper error instead of unreachable! improves robustness
-            _ => Err(Error::InvalidData("Unexpected response type from get status")),
+            _ => Err(Error::InvalidData(
+                "Unexpected response type from get status",
+            )),
         }
     }
-    
+
     /// Get the current key path from the card
     pub fn get_key_path(&mut self) -> crate::Result<DerivationPath> {
         use crate::commands::get_status::GetStatusCommand;
-        
+
         let cmd = GetStatusCommand::key_path();
-        let response = self.executor.execute(&cmd)
-            .map_err(Error::from)?;
-        
-        match response {
+
+        // Send command directly through the transport
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse get key path response")))?;
+
+        // Handle the response
+        let result = GetStatusCommand::parse_response(response).map_err(Error::from)?;
+
+        match result {
             GetStatusOk::KeyPathStatus { path } => Ok(path),
             // Return error if unexpected response type is received
-            _ => Err(Error::InvalidData("Unexpected response type from get key path")),
+            _ => Err(Error::InvalidData(
+                "Unexpected response type from get key path",
+            )),
         }
-    }
-
-    /// Verify PIN
-    pub fn verify_pin<F>(&mut self, pin: F) -> crate::Result<()>
-    where
-        F: FnOnce() -> String,
-    {
-        // Create and execute the command
-        let pin_str = pin();
-        let cmd = VerifyPinCommand::with_pin(&pin_str);
-        let _ = self.executor.execute(&cmd)
-            .map_err(Error::from)?;
-
-        Ok(())
     }
 
     /// Generate a new key on the card
@@ -193,31 +300,49 @@ where
         // Create the command
         let cmd = GenerateKeyCommand::create();
 
-        // Execute it (security requirements handled automatically by executor)
-        let response = self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse generate key response")))?;
+
+        // Handle the response
+        let result = GenerateKeyCommand::parse_response(response).map_err(Error::from)?;
 
         // Pattern match to extract the key_uid and ensure type safety
-        match response {
+        match result {
             GenerateKeyOk::Success { key_uid } => Ok(key_uid),
             // This branch should be unreachable if the command succeeded, but this ensures type safety
             // and makes the code more resilient to future changes
             #[allow(unreachable_patterns)]
-            _ => Err(Error::InvalidData("Unexpected response type from generate key")),
+            _ => Err(Error::InvalidData(
+                "Unexpected response type from generate key",
+            )),
         }
     }
 
     /// Sign data with the key on the card
-    pub fn sign(&mut self, data: &[u8; 32], path: &KeyPath) -> crate::Result<alloy_primitives::Signature> {
+    pub fn sign(
+        &mut self,
+        data: &[u8; 32],
+        path: &KeyPath,
+    ) -> crate::Result<alloy_primitives::Signature> {
         // Create sign command with path and data
         let cmd = SignCommand::with(data, path, None)?;
 
-        // Execute the command
-        let response = self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse sign response")))?;
+
+        // Handle the response
+        let result = SignCommand::parse_response(response).map_err(Error::from)?;
 
         // Extract the signature using pattern matching for type safety
-        let signature = match response {
+        let signature = match result {
             SignOk::Success { signature } => signature,
             // This branch should be unreachable if the command succeeded, but this ensures type safety
             #[allow(unreachable_patterns)]
@@ -250,26 +375,6 @@ where
         Ok(signature)
     }
 
-    /// Get the executor
-    pub fn executor(&self) -> &E {
-        &self.executor
-    }
-
-    /// Get mutable access to the executor
-    pub fn executor_mut(&mut self) -> &mut E {
-        &mut self.executor
-    }
-
-    /// Set or update pairing information
-    pub fn set_pairing_info(&mut self, pairing_info: PairingInfo) {
-        self.pairing_info = Some(pairing_info);
-    }
-
-    /// Get current pairing information
-    pub fn pairing_info(&self) -> Option<&PairingInfo> {
-        self.pairing_info.as_ref()
-    }
-
     /// Change credential (PIN, PUK, or pairing secret)
     pub fn change_credential<S>(
         &mut self,
@@ -297,8 +402,17 @@ where
         let puk_str = puk.as_ref();
         let pin_str = new_pin.as_ref();
         let cmd = UnblockPinCommand::with_puk_and_new_pin(puk_str, pin_str);
-        self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse unblock PIN response")))?;
+
+        // Handle the response
+        UnblockPinCommand::parse_response(response).map_err(Error::from)?;
+
         Ok(())
     }
 
@@ -307,32 +421,69 @@ where
         use crate::commands::RemoveKeyCommand;
 
         let cmd = RemoveKeyCommand::remove();
-        self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse remove key response")))?;
+
+        // Handle the response
+        RemoveKeyCommand::parse_response(response).map_err(Error::from)?;
+
         Ok(())
     }
 
     /// Change PIN
     pub fn change_pin(&mut self, new_pin: &str) -> crate::Result<()> {
         let cmd = ChangePinCommand::with_pin(new_pin);
-        self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse change PIN response")))?;
+
+        // Handle the response
+        ChangePinCommand::parse_response(response).map_err(Error::from)?;
+
         Ok(())
     }
 
     /// Change PUK
     pub fn change_puk(&mut self, new_puk: &str) -> crate::Result<()> {
         let cmd = ChangePinCommand::with_puk(new_puk);
-        self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes)
+            .map_err(|e| Error::from(e.with_context("Failed to parse change PUK response")))?;
+
+        // Handle the response
+        ChangePinCommand::parse_response(response).map_err(Error::from)?;
+
         Ok(())
     }
 
     /// Change pairing secret
     pub fn change_pairing_secret(&mut self, new_secret: &[u8]) -> crate::Result<()> {
         let cmd = ChangePinCommand::with_pairing_secret(new_secret);
-        self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes).map_err(|e| {
+            Error::from(e.with_context("Failed to parse change pairing secret response"))
+        })?;
+
+        // Handle the response
+        ChangePinCommand::parse_response(response).map_err(Error::from)?;
+
         Ok(())
     }
 
@@ -344,8 +495,18 @@ where
         let derivation_path = DerivationPath::from_str(path)?;
 
         let cmd = SetPinlessPathCommand::with_path(&derivation_path);
-        self.executor.execute(&cmd)
-            .map_err(Error::from)?;
+
+        // Send command directly
+        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+
+        // Parse response
+        let response = Response::from_bytes(&response_bytes).map_err(|e| {
+            Error::from(e.with_context("Failed to parse set pinless path response"))
+        })?;
+
+        // Handle the response
+        SetPinlessPathCommand::parse_response(response).map_err(Error::from)?;
+
         Ok(())
     }
 }

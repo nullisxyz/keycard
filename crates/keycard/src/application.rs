@@ -167,8 +167,6 @@ impl<T: CardTransport> Keycard<T> {
 
     /// Create a secure Keycard that uses a KeycardSCP transport
     pub fn into_secure_channel(self) -> Result<Keycard<SecureTransport<T>>>
-    where
-        T: Clone,
     {
         if self.pairing_info.is_none() {
             return Err(Error::PairingRequired);
@@ -184,9 +182,11 @@ impl<T: CardTransport> Keycard<T> {
         let card_public_key = self.card_public_key.unwrap();
         let pairing_info = self.pairing_info.unwrap();
 
-        // Initialize a secure channel with the transport and pairing info
-        let secure_transport =
-            SecureTransport::initialize(self.transport, card_public_key, pairing_info.clone())?;
+        // Create a new KeycardSCP with the transport
+        let mut secure_transport = SecureTransport::new(self.transport);
+        
+        // Initialize the session (but don't open the secure channel yet)
+        secure_transport.initialize_session(&card_public_key, &pairing_info)?;
 
         // Create the new keycard
         let mut secure_keycard = Keycard::new(secure_transport);

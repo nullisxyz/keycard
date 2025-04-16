@@ -1,7 +1,7 @@
 use alloy_primitives::hex::encode;
 use bytes::{Bytes, BytesMut};
+use generic_array::GenericArray;
 use k256::PublicKey;
-use nexum_apdu_core::error::Error;
 use nexum_apdu_core::prelude::*;
 use rand_v8::{RngCore, thread_rng};
 use sha2::{Digest, Sha256};
@@ -11,22 +11,19 @@ use tracing::{debug, trace, warn};
 use crate::{
     MutuallyAuthenticateOk, PairOk, PairingInfo,
     commands::{MutuallyAuthenticateCommand, PairCommand, pin},
-    crypto::{
-        ApduMeta, Challenge, calculate_cryptogram, decrypt_data, encrypt_data,
-        generate_pairing_token,
-    },
+    crypto::{Challenge, calculate_cryptogram, decrypt_data, encrypt_data, generate_pairing_token},
     session::Session,
 };
 
 /// Represents a secure communication channel with a Keycard
 #[derive(Clone)]
 pub struct KeycardSCP<T: CardTransport> {
-    /// Session containing keys and state
-    session: Session,
-    /// Security level of the secure channel
-    security_level: SecurityLevel,
     /// The underlying transport
     transport: T,
+    /// Session containing keys and state (None if not established)
+    session: Option<Session>,
+    /// Security level of the secure channel
+    security_level: SecurityLevel,
     /// Whether the secure channel is established
     established: bool,
 }
@@ -36,38 +33,46 @@ impl<T: CardTransport> fmt::Debug for KeycardSCP<T> {
         f.debug_struct("KeycardSCP")
             .field("security_level", &self.security_level)
             .field("established", &self.established)
+            .field("session_initialized", &self.session.is_some())
             .finish()
     }
 }
 
 impl<T: CardTransport> KeycardSCP<T> {
-    /// Create a new secure channel instance
-
-    /// Initialize a secure channel with existing pairing info and public key
-    pub fn initialize(
-        mut transport: T,
-        card_public_key: PublicKey,
-        pairing_info: PairingInfo,
-    ) -> crate::Result<Self> {
-        let session = Session::new(&card_public_key, &pairing_info, &mut transport)?;
-
-        let mut secure_channel = Self {
+    /// Create a new secure channel instance with just a transport
+    /// The secure channel is not established until `open()` is called
+    pub fn new(transport: T) -> Self {
+        Self {
             transport,
-            session,
+            session: None,
             security_level: SecurityLevel::none(),
             established: false,
-        };
+        }
+    }
 
-        // Authenticate to establish the channel
-        secure_channel.authenticate()?;
+    /// Initialize the session for this secure channel using existing pairing info and public key
+    /// This prepares the session but does not establish the secure channel yet
+    pub fn initialize_session(
+        &mut self,
+        card_public_key: &PublicKey,
+        pairing_info: &PairingInfo,
+    ) -> crate::Result<()> {
+        // Create a new session
+        let session = Session::new(card_public_key, pairing_info, &mut self.transport)?;
 
-        Ok(secure_channel)
+        // Store the session
+        self.session = Some(session);
+
+        Ok(())
     }
 
     /// Pair with the card using the provided pairing password
-    pub fn pair<Tr, F>(transport: &mut Tr, pairing_pass: F) -> crate::Result<PairingInfo>
+    /// This is a static method that can be called without an established channel
+    pub fn pair<F>(
+        transport: &mut impl CardTransport,
+        pairing_pass: F,
+    ) -> crate::Result<PairingInfo>
     where
-        Tr: CardTransport,
         F: FnOnce() -> String,
     {
         debug!("Starting pairing process with pairing password");
@@ -149,28 +154,24 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Encrypt APDU command data for the secure channel
+    /// This method assumes the secure channel is established and session is initialized
     fn protect_command(&mut self, command: &[u8]) -> crate::Result<Vec<u8>> {
+        // Parse the command into a Command object
         let command = Command::from_bytes(command)?;
-
-        // Only apply protection if the channel is established
-        if !self.is_established() {
-            return Ok(command.to_bytes().to_vec());
-        }
-
         let payload = command.data().unwrap_or(&[]);
 
-        // Encrypt the command data if encryption is enabled
+        // Ensure session is available
+        let session = self.session.as_mut().unwrap();
+
+        // Encrypt the command data using the established session
         let mut data_to_encrypt = BytesMut::from(payload);
-        let encrypted_bytes = encrypt_data(
-            &mut data_to_encrypt,
-            self.session.keys().enc(),
-            self.session.iv(),
-        );
+        let encrypted_bytes =
+            encrypt_data(&mut data_to_encrypt, session.keys().enc(), session.iv());
 
         let encrypted_data = encrypted_bytes.to_vec();
 
         // Prepare metadata for MAC calculation
-        let mut meta = ApduMeta::default();
+        let mut meta = GenericArray::default();
         meta[0] = command.class();
         meta[1] = command.instruction();
         meta[2] = command.p1();
@@ -179,11 +180,11 @@ impl<T: CardTransport> KeycardSCP<T> {
 
         // Calculate the IV/MAC
         let encrypted_bytes_copy = Bytes::copy_from_slice(&encrypted_data);
-        self.session.update_iv(&meta, &encrypted_bytes_copy);
+        session.update_iv(&meta, &encrypted_bytes_copy);
 
         // Combine MAC and encrypted data
         let mut data = BytesMut::with_capacity(16 + encrypted_data.len());
-        data.extend_from_slice(self.session.iv().as_ref());
+        data.extend_from_slice(session.iv().as_ref());
         data.extend_from_slice(&encrypted_data);
 
         trace!(
@@ -195,19 +196,24 @@ impl<T: CardTransport> KeycardSCP<T> {
             data.len()
         );
 
+        // Create the protected command
         let protected_command = command.with_data(data);
         Ok(protected_command.to_bytes().to_vec())
     }
 
     /// Process APDU response data from the secure channel
+    /// This method assumes the secure channel is established and session is initialized
     fn process_response(&mut self, response: &[u8]) -> crate::Result<Bytes> {
         // Parse the response
         let response = Response::from_bytes(response)?;
 
-        // Only process if the channel is established and response is success
-        if !self.is_established() || !response.is_success() {
+        // For non-success responses, return as-is without decryption
+        if !response.is_success() {
             return Ok(Bytes::copy_from_slice(response.to_bytes().as_ref()));
         }
+
+        // Ensure session is available
+        let session = self.session.as_mut().unwrap();
 
         match response.payload() {
             Some(payload) => {
@@ -227,22 +233,19 @@ impl<T: CardTransport> KeycardSCP<T> {
                 let rdata = Bytes::from(rdata.to_vec());
 
                 // Prepare metadata for MAC verification
-                let mut metadata = ApduMeta::default();
+                let mut metadata = GenericArray::default();
                 metadata[0] = response_data.len() as u8;
 
                 // Decrypt the data
                 let mut data_to_decrypt = BytesMut::from(&rdata[..]);
-                let decrypted_data = decrypt_data(
-                    &mut data_to_decrypt,
-                    self.session.keys().enc(),
-                    self.session.iv(),
-                )?;
+                let decrypted_data =
+                    decrypt_data(&mut data_to_decrypt, session.keys().enc(), session.iv())?;
 
                 // Update IV for MAC verification
-                self.session.update_iv(&metadata, &rdata);
+                session.update_iv(&metadata, &rdata);
 
                 // Verify MAC
-                if rmac != self.session.iv().as_slice() {
+                if rmac != session.iv().as_slice() {
                     warn!("MAC verification failed for secure channel response");
                     return Err(Error::protocol("Invalid response MAC"))?;
                 }
@@ -315,6 +318,13 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
             return Ok(());
         }
 
+        // Check if session has been initialized
+        if self.session.is_none() {
+            return Err(Error::message(
+                "Session not initialized. Call initialize_session() first",
+            ));
+        }
+
         // Perform mutual authentication to establish the secure channel
         self.authenticate()
             .map_err(|_| Error::AuthenticationFailed("Mutual authentication failed"))
@@ -375,21 +385,23 @@ impl<T: CardTransport> CardTransport for KeycardSCP<T> {
             self.is_established()
         );
 
-        if self.is_established() {
-            debug!("KeycardSCP: protecting command");
-            // Apply SCP protection
+        if self.is_established() && self.session.is_some() {
+            debug!("KeycardSCP: protecting command and processing response through secure channel");
+
+            // Apply SCP protection - only when secure channel is established
             let protected = self
                 .protect_command(command)
                 .map_err(|e| Error::message(e.to_string()))?;
 
-            // Send the protected command
+            // Send the protected command through the underlying transport
             let response = self.transport.transmit_raw(&protected)?;
 
-            // Process the response
+            // Process the response through the secure channel
             self.process_response(&response)
                 .map_err(|e| Error::message(e.to_string()))
         } else {
-            // If channel not established, pass through to underlying transport
+            // If channel not established, pass through to underlying transport directly
+            debug!("KeycardSCP: passing command through to underlying transport");
             self.transport.transmit_raw(command)
         }
     }
@@ -444,9 +456,9 @@ mod tests {
 
         // Create secure channel with the session
         let mut scp = KeycardSCP {
-            session,
-            security_level: SecurityLevel::enc_mac(),
             transport: MockTransport,
+            session: Some(session),
+            security_level: SecurityLevel::enc_mac(),
             established: true,
         };
 
@@ -467,6 +479,6 @@ mod tests {
 
         // Check the IV matches the expected IV
         let expected_iv = hex::decode("BA796BF8FAD1FD50407B87127B94F502").unwrap();
-        assert_eq!(scp.session.iv().to_vec(), expected_iv);
+        assert_eq!(scp.session.as_ref().unwrap().iv().to_vec(), expected_iv);
     }
 }

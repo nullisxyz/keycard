@@ -1,4 +1,4 @@
-use nexum_apdu_globalplatform::constants::status;
+use nexum_apdu_globalplatform::constants::status::*;
 use nexum_apdu_macros::apdu_pair;
 
 use crate::Keypair;
@@ -40,38 +40,37 @@ apdu_pair! {
         response {
             ok {
                 /// Success response
-                #[sw(status::SW_NO_ERROR)]
+                #[sw(SW_NO_ERROR)]
                 Success {
+                    /// Keypair that has been exported
                     keypair: Keypair,
                 }
             }
 
             errors {
                 /// Conditions not satisfied (e.g. secure channel + verified pin)
-                #[sw(status::SW_CONDITIONS_NOT_SATISFIED)]
+                #[sw(SW_CONDITIONS_NOT_SATISFIED)]
                 #[error("Conditions not satisfied: Require secure channel and verified PIN")]
                 ConditionsNotSatisfied,
 
                 /// Incorrect P1/P2: Invalid export option
-                #[sw(status::SW_INCORRECT_P1P2)]
+                #[sw(SW_INCORRECT_P1P2)]
                 #[error("Incorrect P1/P2: Invalid export option")]
                 IncorrectP1P2,
 
                 /// Wrong Data: Invalid derivation path format
-                #[sw(status::SW_WRONG_DATA)]
+                #[sw(SW_WRONG_DATA)]
                 #[error("Wrong Data: Invalid derivation path format")]
                 WrongData,
             }
 
             custom_parse = |response: &nexum_apdu_core::Response| -> Result<ExportKeyOk, ExportKeyError> {
-                use nexum_apdu_core::ApduResponse;
-
                 match response.status() {
-                    status::SW_NO_ERROR => {
+                    SW_NO_ERROR => {
                         match response.payload() {
                             Some(payload) => {
                                 let keypair = Keypair::try_from(payload.as_ref())
-                                    .map_err(|e| nexum_apdu_core::response::error::ResponseError::Message(e.to_string()))?;
+                                    .map_err(|_| Error::ParseError("Unable to parse keypair"))?;
                                 Ok(ExportKeyOk::Success{
                                     keypair,
                                 })
@@ -79,9 +78,9 @@ apdu_pair! {
                             None => Err(ExportKeyError::WrongData),
                         }
                     },
-                    status::SW_CONDITIONS_NOT_SATISFIED => Err(ExportKeyError::ConditionsNotSatisfied),
-                    status::SW_INCORRECT_P1P2 => Err(ExportKeyError::IncorrectP1P2),
-                    status::SW_WRONG_DATA => Err(ExportKeyError::WrongData),
+                    SW_CONDITIONS_NOT_SATISFIED => Err(ExportKeyError::ConditionsNotSatisfied),
+                    SW_INCORRECT_P1P2 => Err(ExportKeyError::IncorrectP1P2),
+                    SW_WRONG_DATA => Err(ExportKeyError::WrongData),
                     _ => Err(ExportKeyError::Unknown {sw1: response.status().sw1, sw2: response.status().sw2}),
                 }
             }

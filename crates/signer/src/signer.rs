@@ -9,21 +9,33 @@ use nexum_apdu_core::prelude::*;
 use nexum_keycard::{KeyPath, Keycard, KeycardSCP};
 use tokio::sync::Mutex;
 
-#[derive(Debug)]
+// Temporary remove Debug derive since Keycard doesn't implement Debug
 pub struct KeycardSigner<T>
 where
     T: CardTransport,
 {
-    inner: Arc<Mutex<Keycard<KeycardSCP<T>>>>,
+    inner: Arc<Mutex<Keycard<CardExecutor<KeycardSCP<T>>>>>,
     pub(crate) chain_id: Option<ChainId>,
     pub(crate) address: Address,
+}
+
+impl<T> std::fmt::Debug for KeycardSigner<T>
+where
+    T: CardTransport,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeycardSigner")
+            .field("chain_id", &self.chain_id)
+            .field("address", &self.address)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T> KeycardSigner<T>
 where
     T: CardTransport,
 {
-    pub fn new(keycard: Arc<Mutex<Keycard<KeycardSCP<T>>>>) -> Self {
+    pub fn new(keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSCP<T>>>>>) -> Self {
         let address = address!("0xf888b1c80d40c08e53e4f3446ae2dac72fe0f31c");
         Self {
             inner: keycard,
@@ -40,11 +52,28 @@ where
 {
     #[inline]
     async fn sign_hash(&self, data: &B256) -> Result<Signature> {
-        self.inner
+        // Convert the B256 to a byte slice for KeyCard's sign method
+        let data_bytes: &[u8] = data.as_slice();
+        
+        // Get the keycard signature
+        let keycard_signature = self.inner
             .lock()
             .await
-            .sign(data, &KeyPath::Current)
-            .map_err(|e| alloy_signer::Error::Other(Box::new(e)))
+            .sign(data_bytes, KeyPath::Current, None)
+            .map_err(|e| alloy_signer::Error::Other(Box::new(e)))?;
+            
+        // Convert nexum_keycard::Signature to alloy_primitives::Signature
+        // Extract the r, s, v components
+        let r_bytes = keycard_signature.r();
+        let s_bytes = keycard_signature.s();
+        let v = keycard_signature.recid().recovery_byte();
+        
+        // Create an alloy_primitives::Signature from r, s, v
+        let r = B256::from_slice(r_bytes);
+        let s = B256::from_slice(s_bytes);
+        
+        // Create the signature with the components
+        Ok(Signature::from_bytes_with_v(&[r.0, s.0, [v]].concat()).unwrap())
     }
 
     #[inline]

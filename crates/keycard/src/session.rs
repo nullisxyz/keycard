@@ -71,11 +71,18 @@ impl Session {
         );
 
         // Send the command
-        let OpenSecureChannelOk::Success { challenge, iv } =
-            OpenSecureChannelCommand::parse_response_raw(
-                transport.transmit_raw(&cmd.to_command().to_bytes())?,
-            )
+        let command_bytes = cmd.to_command().to_bytes();
+        let response_bytes = transport.transmit_raw(&command_bytes)?;
+        let response = OpenSecureChannelCommand::parse_response_raw(Bytes::copy_from_slice(&response_bytes))
             .map_err(|e| Error::Message(e.to_string()))?;
+            
+        // Extract the challenge and IV using pattern matching for type safety
+        let (challenge, iv) = match response {
+            OpenSecureChannelOk::Success { challenge, iv } => (challenge, iv),
+            // This branch should be unreachable if the command succeeded, but this ensures type safety
+            #[allow(unreachable_patterns)]
+            _ => return Err(Error::Message("Unexpected response type from open secure channel".to_string())),
+        };
 
         // Derive the session keys
         let (enc_key, mac_key) = derive_session_keys(shared_secret, &pairing_info.key, &challenge);

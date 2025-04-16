@@ -1,17 +1,20 @@
+use alloy_primitives::hex::encode;
 use bytes::{Bytes, BytesMut};
 use k256::PublicKey;
-use nexum_apdu_core::prelude::*;
 use nexum_apdu_core::error::Error;
+use nexum_apdu_core::prelude::*;
 use rand_v8::{RngCore, thread_rng};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use tracing::{debug, trace, warn};
 
 use crate::{
-    PairingInfo,
+    MutuallyAuthenticateOk, PairOk, PairingInfo,
     commands::{MutuallyAuthenticateCommand, PairCommand, pin},
-    crypto::{ApduMeta, Challenge},
-    crypto::{calculate_cryptogram, decrypt_data, encrypt_data, generate_pairing_token},
+    crypto::{
+        ApduMeta, Challenge, calculate_cryptogram, decrypt_data, encrypt_data,
+        generate_pairing_token,
+    },
     session::Session,
 };
 
@@ -43,7 +46,7 @@ impl<T: CardTransport> KeycardSCP<T> {
         mut transport: T,
         card_public_key: PublicKey,
         pairing_info: PairingInfo,
-    ) -> Result<Self, Error> {
+    ) -> crate::Result<Self> {
         let session = Session::new(&card_public_key, &pairing_info, &mut transport)?;
 
         let mut secure_channel = Self {
@@ -60,12 +63,15 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Pair with the card using the provided pairing password
-    pub fn pair<Tr, F>(transport: &mut Tr, pairing_pass: F) -> std::result::Result<PairingInfo, nexum_apdu_core::Error>
+    pub fn pair<Tr, F>(transport: &mut Tr, pairing_pass: F) -> crate::Result<PairingInfo>
     where
         Tr: CardTransport,
         F: FnOnce() -> String,
     {
         debug!("Starting pairing process with pairing password");
+
+        // Determine the shared secret
+        let shared_secret = generate_pairing_token(&pairing_pass());
 
         // Generate a random challenge
         let mut challenge = Challenge::default();
@@ -75,92 +81,64 @@ impl<T: CardTransport> KeycardSCP<T> {
         let cmd = PairCommand::with_first_stage(&challenge);
 
         // Send the command through the transport
-        let command_bytes = cmd.to_command().to_bytes();
-        let response_bytes = transport.transmit_raw(&command_bytes)?;
-        let response = Response::from_bytes(&response_bytes)?;
-        
-        if !response.is_success() {
-            return Err(Error::message("PAIR command failed"));
-        }
-        
-        // Manual parsing of the response for PairOk
-        let payload = response.payload().as_ref().ok_or_else(|| Error::protocol("Missing response payload"))?;
-        if payload.len() < 16 { // At least challenge (8) + cryptogram (8)
-            return Err(Error::protocol("Invalid response payload length"));
-        }
-        
-        // Extract the challenge and cryptogram from the payload
-        let mut card_challenge = Challenge::default();
-        card_challenge.copy_from_slice(&payload[0..8]);
-        
-        let mut card_cryptogram = [0u8; 8];
-        card_cryptogram.copy_from_slice(&payload[8..16]);
+        let response_bytes = transport.transmit_raw(&cmd.to_command().to_bytes())?;
+        match PairCommand::parse_response_raw(response_bytes) {
+            Ok(PairOk::FirstStageSuccess {
+                cryptogram: card_cryptogram,
+                challenge: card_challenge,
+            }) => {
+                let expected_cryptogram = calculate_cryptogram(&shared_secret, &card_challenge);
+                if card_cryptogram != expected_cryptogram {
+                    return Err(crate::Error::PairingFailed);
+                }
 
-        // Verify the card cryptogram
-        let shared_secret = generate_pairing_token(&pairing_pass());
-        let expected_cryptogram = calculate_cryptogram(&shared_secret, &challenge);
-        let expected_cryptogram_array = <[u8; 8]>::try_from(expected_cryptogram.as_slice()).unwrap();
-        if card_cryptogram != expected_cryptogram_array {
-            return Err(Error::protocol("Card cryptogram verification failed"));
-        }
+                let client_cryptogram = calculate_cryptogram(&shared_secret, &card_challenge);
 
-        // Calculate client cryptogram
-        let client_cryptogram = calculate_cryptogram(&shared_secret, &card_challenge);
-        
-        // Create PAIR (final step) command
-        let cmd = PairCommand::with_final_stage(&client_cryptogram);
+                let cmd = PairCommand::with_final_stage(&client_cryptogram);
 
-        // Send the command through the transport
-        let command_bytes = cmd.to_command().to_bytes();
-        let response_bytes = transport.transmit_raw(&command_bytes)?;
-        let response = Response::from_bytes(&response_bytes)?;
-        
-        if !response.is_success() {
-            return Err(Error::message("PAIR final stage command failed"));
-        }
-        
-        // Manual parsing of the final response for PairOk
-        let payload = response.payload().as_ref().ok_or_else(|| Error::protocol("Missing final response payload"))?;
-        if payload.len() < 33 { // At least index (1) + salt (32)
-            return Err(Error::protocol("Invalid final response payload length"));
-        }
-        
-        // Extract the pairing index and salt from the payload
-        let index = payload[0];
-        let salt = &payload[1..33];
-        
-        // The salt is available directly from the typed response
-        
-        // Generate the key using the shared secret and salt
-        let key = {
-            let mut hasher = Sha256::new();
-            Digest::update(&mut hasher, &shared_secret);
-            Digest::update(&mut hasher, salt);
-            hasher.finalize()
-        };
-        
-        debug!("Pairing successful with index {}", index);
+                // Send the command through the transport
+                let response_bytes = transport.transmit_raw(&cmd.to_command().to_bytes())?;
+                match PairCommand::parse_response_raw(response_bytes) {
+                    Ok(PairOk::FinalStageSuccess {
+                        pairing_index,
+                        salt,
+                    }) => {
+                        let key = {
+                            let mut hasher = Sha256::new();
+                            hasher.update(&shared_secret);
+                            hasher.update(&salt);
+                            hasher.finalize()
+                        };
 
-        Ok(PairingInfo { key, index })
+                        debug!("Pairing successful with index {}", pairing_index);
+
+                        Ok(PairingInfo {
+                            key,
+                            index: pairing_index,
+                        })
+                    }
+                    _ => Err(crate::Error::invalid_data("Invalid response")),
+                }
+            }
+            _ => Err(crate::Error::invalid_data("Invalid response")),
+        }
     }
 
     /// Verify PIN and upgrade security level
-    pub fn verify_pin<E, F>(&mut self, executor: &mut E, pin: F) -> Result<(), Error>
+    pub fn verify_pin<E, F>(&mut self, executor: &mut E, pin: F) -> crate::Result<()>
     where
         E: Executor,
         F: FnOnce() -> String,
     {
         if !self.is_established() {
-            return Err(Error::SecureChannelNotEstablished);
+            return Err(Error::SecureChannelNotEstablished)?;
         }
 
         // Create the command
         let cmd = pin::VerifyPinCommand::with_pin(&pin());
 
         // Execute the command
-        executor
-            .execute(&cmd)
-            .map_err(|e| Error::message(e.to_string()))?;
+        executor.execute(&cmd)?;
 
         // At this point, it is guaranteed that the PIN was verified successfully.
         self.security_level = SecurityLevel::full();
@@ -169,7 +147,7 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Encrypt APDU command data for the secure channel
-    fn protect_command(&mut self, command: &[u8]) -> Result<Vec<u8>, Error> {
+    fn protect_command(&mut self, command: &[u8]) -> crate::Result<Vec<u8>> {
         let command = Command::from_bytes(command)?;
 
         // Only apply protection if the channel is established
@@ -220,7 +198,7 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Process APDU response data from the secure channel
-    fn process_response(&mut self, response: &[u8]) -> Result<Bytes, Error> {
+    fn process_response(&mut self, response: &[u8]) -> crate::Result<Bytes> {
         // Parse the response
         let response = Response::from_bytes(response)?;
 
@@ -239,7 +217,7 @@ impl<T: CardTransport> KeycardSCP<T> {
                         "Response data too short for secure channel: {}",
                         response_data.len()
                     );
-                    return Err(Error::BufferTooSmall);
+                    return Err(Error::BufferTooSmall)?;
                 }
 
                 // Split into MAC and encrypted data
@@ -256,8 +234,7 @@ impl<T: CardTransport> KeycardSCP<T> {
                     &mut data_to_decrypt,
                     self.session.keys().enc(),
                     self.session.iv(),
-                )
-                .map_err(|e| Error::message(e.to_string()))?;
+                )?;
 
                 // Update IV for MAC verification
                 self.session.update_iv(&metadata, &rdata);
@@ -265,7 +242,7 @@ impl<T: CardTransport> KeycardSCP<T> {
                 // Verify MAC
                 if rmac != self.session.iv().as_slice() {
                     warn!("MAC verification failed for secure channel response");
-                    return Err(Error::protocol("Invalid response MAC"));
+                    return Err(Error::protocol("Invalid response MAC"))?;
                 }
 
                 trace!("Decrypted response: len={}", decrypted_data.len());
@@ -285,7 +262,7 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Perform mutual authentication to establish secure channel
-    fn authenticate(&mut self) -> Result<(), Error> {
+    fn authenticate(&mut self) -> crate::Result<()> {
         debug!("Starting mutual authentication process");
 
         // Generate a random challenge
@@ -299,19 +276,24 @@ impl<T: CardTransport> KeycardSCP<T> {
         let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
 
         // Parse the response
-        let response = Response::from_bytes(&response_bytes)?;
+        match MutuallyAuthenticateCommand::parse_response_raw(response_bytes) {
+            Ok(response) => {
+                // If we end up here, we can verify that we are using the same MAC key as the card
+                // and therefore mutual authentication was successful
+                let MutuallyAuthenticateOk::Success { cryptogram } = response;
+                debug!(
+                    response = %encode(cryptogram),
+                    "Mutual authentication successful"
+                );
 
-        if !response.is_success() {
-            return Err(Error::AuthenticationFailed("Mutual authentication failed"));
+                // Update state
+                self.established = true;
+                self.security_level = SecurityLevel::enc_mac();
+
+                Ok(())
+            }
+            Err(_) => Err(crate::Error::MutualAuthenticationFailed),
         }
-
-        debug!("Mutual authentication successful");
-
-        // Update state
-        self.established = true;
-        self.security_level = SecurityLevel::enc_mac(); // Encryption and MAC, but not authenticated
-
-        Ok(())
     }
 }
 
@@ -326,20 +308,21 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         &mut self.transport
     }
 
-    fn open(&mut self) -> std::result::Result<(), nexum_apdu_core::Error> {
+    fn open(&mut self) -> Result<(), Error> {
         if self.is_established() {
             return Ok(());
         }
 
         // Perform mutual authentication to establish the secure channel
         self.authenticate()
+            .map_err(|_| Error::AuthenticationFailed("Mutual authentication failed"))
     }
 
     fn is_established(&self) -> bool {
         self.established
     }
 
-    fn close(&mut self) -> std::result::Result<(), nexum_apdu_core::Error> {
+    fn close(&mut self) -> Result<(), Error> {
         debug!("Closing Keycard secure channel");
         self.established = false;
         self.security_level = SecurityLevel::none();
@@ -354,7 +337,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         self.security_level
     }
 
-    fn upgrade(&mut self, level: SecurityLevel) -> std::result::Result<(), nexum_apdu_core::Error> {
+    fn upgrade(&mut self, level: SecurityLevel) -> Result<(), Error> {
         trace!(
             "KeycardSCP::upgrade called with current level={:?}, requested level={:?}",
             self.security_level, level
@@ -383,7 +366,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
 }
 
 impl<T: CardTransport> CardTransport for KeycardSCP<T> {
-    fn transmit_raw(&mut self, command: &[u8]) -> std::result::Result<Bytes, nexum_apdu_core::Error> {
+    fn transmit_raw(&mut self, command: &[u8]) -> Result<Bytes, Error> {
         trace!(
             "KeycardSCP::transmit_raw called with security_level={:?}, established={}",
             self.security_level,
@@ -393,20 +376,23 @@ impl<T: CardTransport> CardTransport for KeycardSCP<T> {
         if self.is_established() {
             debug!("KeycardSCP: protecting command");
             // Apply SCP protection
-            let protected = self.protect_command(command)?;
+            let protected = self
+                .protect_command(command)
+                .map_err(|e| Error::message(e.to_string()))?;
 
             // Send the protected command
             let response = self.transport.transmit_raw(&protected)?;
 
             // Process the response
             self.process_response(&response)
+                .map_err(|e| Error::message(e.to_string()))
         } else {
             // If channel not established, pass through to underlying transport
             self.transport.transmit_raw(command)
         }
     }
 
-    fn reset(&mut self) -> std::result::Result<(), nexum_apdu_core::Error> {
+    fn reset(&mut self) -> Result<(), Error> {
         // Close the channel if it's open
         if self.is_established() {
             self.close()?;

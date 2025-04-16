@@ -81,11 +81,14 @@ where
         // Create SELECT command
         debug!("Selecting application: {:?}", aid);
         let cmd = SelectCommand::with_aid(aid.to_vec());
+        
+        // Execute the command
         let result = self.executor.execute(&cmd)?;
 
-        let app_select_response = ParsedSelectOk::try_from(result).map_err(|_| {
-            Error::Core(CoreError::ParseError("Unable to parse response"))
-        })?;
+        // Convert to our custom response type
+        let app_select_response = ParsedSelectOk::try_from(result)
+            .map_err(|_| Error::Core(CoreError::ParseError("Unable to parse response")))?;
+            
         if let ParsedSelectOk::ApplicationInfo(application_info) = &app_select_response {
             self.application_info = Some(application_info.clone());
             if let Some(public_key) = application_info.public_key {
@@ -110,14 +113,13 @@ where
         // Create INIT command
         match select_response {
             ParsedSelectOk::PreInitialized(pre) => {
-                let cmd = InitCommand::with_card_pubkey_and_secrets(
-                    pre.ok_or(Error::SecureChannelNotSupported)?,
-                    secrets,
-                );
+                let card_pubkey = pre.ok_or(Error::SecureChannelNotSupported)?;
+                
+                let cmd = InitCommand::with_card_pubkey_and_secrets(card_pubkey, secrets);
 
                 Ok(self.executor.execute(&cmd)?)
             }
-            _ => Err(Error::AlreadyInitialised),
+            _ => Err(Error::AlreadyInitialized),
         }
     }
 

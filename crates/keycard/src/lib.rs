@@ -11,7 +11,7 @@ mod types;
 pub use application::Keycard;
 pub use commands::*;
 pub use crypto::Challenge;
-pub use error::{Error, Result};
+pub use error::{Error, Result, ResultExt, CoreResultExt, GpResultExt};
 pub use secrets::Secrets;
 pub use secure_channel::KeycardSCP;
 pub use types::{ApplicationInfo, ApplicationStatus, Keypair, PairingInfo, PublicKey};

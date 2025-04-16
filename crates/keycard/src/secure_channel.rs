@@ -1,7 +1,7 @@
 use bytes::{Bytes, BytesMut};
 use k256::PublicKey;
-use nexum_apdu_core::error::Error;
 use nexum_apdu_core::prelude::*;
+use nexum_apdu_core::error::Error;
 use rand_v8::{RngCore, thread_rng};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -60,7 +60,7 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Pair with the card using the provided pairing password
-    pub fn pair<Tr, F>(transport: &mut Tr, pairing_pass: F) -> Result<PairingInfo, Error>
+    pub fn pair<Tr, F>(transport: &mut Tr, pairing_pass: F) -> std::result::Result<PairingInfo, nexum_apdu_core::Error>
     where
         Tr: CardTransport,
         F: FnOnce() -> String,
@@ -107,7 +107,7 @@ impl<T: CardTransport> KeycardSCP<T> {
         // Calculate client cryptogram
         let client_cryptogram = calculate_cryptogram(&shared_secret, &card_challenge);
         
-        // Create PAIR (final step) command - pass the GenericArray directly
+        // Create PAIR (final step) command
         let cmd = PairCommand::with_final_stage(&client_cryptogram);
 
         // Send the command through the transport
@@ -128,6 +128,8 @@ impl<T: CardTransport> KeycardSCP<T> {
         // Extract the pairing index and salt from the payload
         let index = payload[0];
         let salt = &payload[1..33];
+        
+        // The salt is available directly from the typed response
         
         // Generate the key using the shared secret and salt
         let key = {
@@ -324,7 +326,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         &mut self.transport
     }
 
-    fn open(&mut self) -> Result<(), Error> {
+    fn open(&mut self) -> std::result::Result<(), nexum_apdu_core::Error> {
         if self.is_established() {
             return Ok(());
         }
@@ -337,7 +339,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         self.established
     }
 
-    fn close(&mut self) -> Result<(), Error> {
+    fn close(&mut self) -> std::result::Result<(), nexum_apdu_core::Error> {
         debug!("Closing Keycard secure channel");
         self.established = false;
         self.security_level = SecurityLevel::none();
@@ -352,7 +354,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
         self.security_level
     }
 
-    fn upgrade(&mut self, level: SecurityLevel) -> Result<(), Error> {
+    fn upgrade(&mut self, level: SecurityLevel) -> std::result::Result<(), nexum_apdu_core::Error> {
         trace!(
             "KeycardSCP::upgrade called with current level={:?}, requested level={:?}",
             self.security_level, level
@@ -381,7 +383,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
 }
 
 impl<T: CardTransport> CardTransport for KeycardSCP<T> {
-    fn transmit_raw(&mut self, command: &[u8]) -> Result<Bytes, Error> {
+    fn transmit_raw(&mut self, command: &[u8]) -> std::result::Result<Bytes, nexum_apdu_core::Error> {
         trace!(
             "KeycardSCP::transmit_raw called with security_level={:?}, established={}",
             self.security_level,
@@ -404,7 +406,7 @@ impl<T: CardTransport> CardTransport for KeycardSCP<T> {
         }
     }
 
-    fn reset(&mut self) -> Result<(), Error> {
+    fn reset(&mut self) -> std::result::Result<(), nexum_apdu_core::Error> {
         // Close the channel if it's open
         if self.is_established() {
             self.close()?;

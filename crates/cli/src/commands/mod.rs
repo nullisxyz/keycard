@@ -52,10 +52,6 @@ pub enum Commands {
 
     /// Generate a new key pair on the card
     GenerateKey {
-        /// PIN code (needed if not already verified)
-        #[arg(long)]
-        pin: Option<String>,
-
         /// Pairing info for secure channel
         #[command(flatten)]
         pairing: crate::utils::PairingArgs,
@@ -67,10 +63,6 @@ pub enum Commands {
 
     /// Export the current key from the card
     ExportKey {
-        /// PIN code (needed if not already verified)
-        #[arg(long)]
-        pin: Option<String>,
-
         /// Pairing info for secure channel
         #[command(flatten)]
         pairing: crate::utils::PairingArgs,
@@ -112,7 +104,6 @@ pub enum Commands {
 
     /// Unblock PIN using PUK
     UnblockPin {
-        /// PUK code
         #[arg(required = true)]
         puk: String,
 
@@ -131,10 +122,6 @@ pub enum Commands {
         #[arg(required = true)]
         path: String,
 
-        /// PIN code (needed if not already verified)
-        #[arg(long)]
-        pin: Option<String>,
-
         /// Pairing info for secure channel
         #[command(flatten)]
         pairing: crate::utils::PairingArgs,
@@ -145,10 +132,6 @@ pub enum Commands {
         /// BIP39 seed or private key in hex format
         #[arg(required = true)]
         seed: String,
-
-        /// PIN code (needed if not already verified)
-        #[arg(long)]
-        pin: Option<String>,
 
         /// Pairing info for secure channel
         #[command(flatten)]
@@ -183,10 +166,6 @@ pub enum Commands {
 
     /// Remove the current key from the card
     RemoveKey {
-        /// PIN code (needed if not already verified)
-        #[arg(long)]
-        pin: Option<String>,
-
         /// Pairing info for secure channel
         #[command(flatten)]
         pairing: crate::utils::PairingArgs,
@@ -208,20 +187,16 @@ pub enum Commands {
 
     /// Generate a BIP39 mnemonic phrase on the card
     GenerateMnemonic {
-        /// Number of words (12, 18, or 24)
+        /// Number of words (12, 15, 18, 21, or 24)
         #[arg(long, default_value = "24", value_parser = clap::builder::ValueParser::new(|s: &str| -> Result<u8, String> {
             let val = s.parse::<u8>().map_err(|_| "Not a valid number".to_string())?;
-            if val == 12 || val == 18 || val == 24 {
+            if val == 12 || val == 15 || val == 18 || val == 21 || val == 24 {
                 Ok(val)
             } else {
-                Err("Number of words must be 12, 18, or 24".to_string())
+                Err("Number of words must be 12, 15, 18, 21, or 24".to_string())
             }
         }))]
         words_count: u8,
-
-        /// PIN code (needed if not already verified)
-        #[arg(long)]
-        pin: Option<String>,
 
         /// Pairing info for secure channel
         #[command(flatten)]

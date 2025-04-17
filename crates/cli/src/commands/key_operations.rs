@@ -6,14 +6,13 @@ use nexum_apdu_transport_pcsc::PcscTransport;
 use nexum_keycard::ExportOption;
 use std::error::Error;
 use std::str::FromStr;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::utils;
 
 /// Generate a key on the card
 pub fn generate_key_command(
     transport: PcscTransport,
-    _pin: Option<&String>,
     pairing_args: &utils::PairingArgs,
     _path: Option<&String>,
 ) -> Result<(), Box<dyn Error>> {
@@ -21,12 +20,8 @@ pub fn generate_key_command(
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Verify PIN if needed
-    let status = keycard.get_status()?;
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    // Verify PIN
+    keycard.verify_pin()?;
 
     // Generate a new key
     info!("Generating master key");
@@ -41,7 +36,6 @@ pub fn generate_key_command(
 /// Export the current key
 pub fn export_key_command(
     transport: PcscTransport,
-    _pin: Option<&String>,
     pairing_args: &utils::PairingArgs,
     path: Option<&String>,
 ) -> Result<(), Box<dyn Error>> {
@@ -49,12 +43,7 @@ pub fn export_key_command(
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Verify PIN if needed
-    let status = keycard.get_status()?;
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    keycard.verify_pin()?;
 
     // Export the key
     let keypair = if let Some(derivation_path) = path {
@@ -105,14 +94,7 @@ pub async fn sign_command(
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Check if PIN verification is needed
-    let status = keycard.get_status()?;
-
-    // Verify PIN if needed
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    keycard.verify_pin()?;
 
     // Sign the data
     let signature = if let Some(derivation_path_str) = path {
@@ -143,19 +125,13 @@ pub async fn sign_command(
 pub fn load_key_command(
     transport: PcscTransport,
     seed: &str,
-    _pin: Option<&String>,
     pairing_args: &utils::PairingArgs,
 ) -> Result<(), Box<dyn Error>> {
     // Initialize keycard with pairing info
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Verify PIN if needed
-    let status = keycard.get_status()?;
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    keycard.verify_pin()?;
 
     // Check if the seed looks like a hex string and decode it
     let seed_bytes = if seed.len() >= 2 && seed.starts_with("0x") {
@@ -179,19 +155,13 @@ pub fn load_key_command(
 /// Remove the current key
 pub fn remove_key_command(
     transport: PcscTransport,
-    _pin: Option<&String>,
     pairing_args: &utils::PairingArgs,
 ) -> Result<(), Box<dyn Error>> {
     // Initialize keycard with pairing info
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Verify PIN if needed
-    let status = keycard.get_status()?;
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    keycard.verify_pin()?;
 
     // Remove the key
     keycard.remove_key(true)?;
@@ -205,19 +175,13 @@ pub fn remove_key_command(
 pub fn set_pinless_path_command(
     transport: PcscTransport,
     path: &str,
-    _pin: Option<&String>,
     pairing_args: &utils::PairingArgs,
 ) -> Result<(), Box<dyn Error>> {
     // Initialize keycard with pairing info
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Verify PIN if needed
-    let status = keycard.get_status()?;
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    keycard.verify_pin()?;
 
     // Parse the derivation path
     let derivation_path = DerivationPath::from_str(path)?;
@@ -234,19 +198,13 @@ pub fn set_pinless_path_command(
 pub fn generate_mnemonic_command(
     transport: PcscTransport,
     words_count: u8,
-    _pin: Option<&String>,
     pairing_args: &utils::PairingArgs,
 ) -> Result<(), Box<dyn Error>> {
     // Initialize keycard with pairing info
     let (mut keycard, _) =
         utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Verify PIN if needed
-    let status = keycard.get_status()?;
-    if status.pin_retry_count < 3 {
-        debug!("PIN verification required");
-        keycard.verify_pin()?;
-    }
+    // keycard.verify_pin()?;
 
     // Generate mnemonic
     let mnemonic = keycard.generate_mnemonic(words_count)?;

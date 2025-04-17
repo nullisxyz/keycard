@@ -67,11 +67,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     commands::init_command(transport, pin, puk, pairing_password, output.as_ref())?
                 }
                 Commands::Pair { output } => commands::pair_command(transport, output.as_ref())?,
-                Commands::GenerateKey { pin, pairing, path } => {
-                    commands::generate_key_command(transport, pin.as_ref(), pairing, path.as_ref())?
+                Commands::GenerateKey { pairing, path } => {
+                    commands::generate_key_command(transport, pairing, path.as_ref())?
                 }
-                Commands::ExportKey { pin, pairing, path } => {
-                    commands::export_key_command(transport, pin.as_ref(), pairing, path.as_ref())?
+                Commands::ExportKey { pairing, path } => {
+                    commands::export_key_command(transport, pairing, path.as_ref())?
                 }
                 Commands::Sign {
                     data,
@@ -93,14 +93,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     new_pin,
                     pairing,
                 } => commands::unblock_pin_command(transport, puk, new_pin, pairing)?,
-                Commands::SetPinlessPath { path, pin, pairing } => {
-                    commands::set_pinless_path_command(transport, path, pin.as_ref(), pairing)?
+                Commands::SetPinlessPath { path, pairing } => {
+                    commands::set_pinless_path_command(transport, path, pairing)?
                 }
-                Commands::LoadKey { seed, pin, pairing } => {
-                    commands::load_key_command(transport, seed, pin.as_ref(), pairing)?
+                Commands::LoadKey { seed, pairing } => {
+                    commands::load_key_command(transport, seed, pairing)?
                 }
-                Commands::RemoveKey { pin, pairing } => {
-                    commands::remove_key_command(transport, pin.as_ref(), pairing)?
+                Commands::RemoveKey { pairing } => {
+                    commands::remove_key_command(transport, pairing)?
                 }
                 Commands::GetStatus { pairing } => {
                     commands::get_status_command(transport, pairing)?
@@ -108,14 +108,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Commands::Unpair { pairing } => commands::unpair_command(transport, pairing)?,
                 Commands::GenerateMnemonic {
                     words_count,
-                    pin,
                     pairing,
-                } => commands::generate_mnemonic_command(
-                    transport,
-                    *words_count,
-                    pin.as_ref(),
-                    pairing,
-                )?,
+                } => commands::generate_mnemonic_command(transport, *words_count, pairing)?,
                 Commands::StoreData {
                     type_tag,
                     data,

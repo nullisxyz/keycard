@@ -1841,6 +1841,7 @@ dependencies = [
  "nexum-apdu-transport-pcsc",
  "nexum-keycard",
  "nexum-keycard-signer",
+ "rand 0.9.0",
  "tokio",
  "tracing",
  "tracing-subscriber",

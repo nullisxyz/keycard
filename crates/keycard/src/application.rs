@@ -3,6 +3,7 @@
 //! This module provides the main Keycard application interface,
 //! which encapsulates all the functionality for interacting with a Keycard.
 
+use k256::ecdsa::RecoveryId;
 use nexum_apdu_core::prelude::*;
 use nexum_apdu_globalplatform::commands::select::SelectCommand;
 
@@ -560,7 +561,12 @@ where
     }
 
     /// Sign data with the current key
-    pub fn sign(&mut self, data: &[u8], key_path: KeyPath, confirm: bool) -> Result<Signature> {
+    pub fn sign(
+        &mut self,
+        data: &[u8],
+        key_path: KeyPath,
+        confirm: bool,
+    ) -> Result<alloy_primitives::Signature> {
         // Create description for confirmation
         let path_str = match &key_path {
             KeyPath::Current => "current key".to_string(),
@@ -590,10 +596,16 @@ where
         let cmd = SignCommand::with(&data_array, &key_path, Some(DeriveMode::Temporary))?;
 
         // Execute the command
-        let response = self.executor.execute_secure(&cmd)?;
+        let SignOk::Success { signature } = self.executor.execute_secure(&cmd)?;
+        let recovery_id = RecoveryId::trial_recovery_from_prehash(
+            &signature.public_key.into(),
+            data,
+            &signature.signature,
+        )?;
+
+        let signature: alloy_primitives::Signature = (*signature.signature, recovery_id).into();
 
         // Return the signature from the response
-        let SignOk::Success { signature } = response;
         Ok(signature)
     }
 

@@ -7,11 +7,11 @@ use k256::ecdsa::RecoveryId;
 use nexum_apdu_core::prelude::*;
 use nexum_apdu_globalplatform::commands::select::SelectCommand;
 
-use crate::commands::*;
 use crate::constants::KEYCARD_AID;
 use crate::secure_channel::KeycardSecureChannelExt;
-use crate::types::{Capabilities, Capability, ExportedKey, Signature};
+use crate::types::{Capabilities, Capability, ExportedKey, Signature, Version};
 use crate::{ApplicationInfo, ApplicationStatus, Error, PairingInfo, Result};
+use crate::{Secrets, commands::*};
 use coins_bip32::path::DerivationPath;
 
 /// Type for function that provides an input string (ie. PIN)
@@ -193,15 +193,28 @@ impl<E: Executor> Keycard<E> {
                 // This allows consumers to see the card state but handle initialization
                 Ok(info)
             }
-            ParsedSelectOk::Uninitialized(_) => Err(Error::Message(
-                "Card is in an uninitialized state".to_string(),
-            )),
+            ParsedSelectOk::Uninitialized(maybe_key) => {
+                // Create a minimal ApplicationInfo for the uninitialized card
+                let app_info = ApplicationInfo {
+                    instance_uid: [0; 16],                   // Empty instance UID
+                    public_key: maybe_key,                   // Use the public key if available
+                    version: Version { major: 0, minor: 0 }, // Set version to 0.0
+                    remaining_slots: 0,                      // No pairing slots yet
+                    key_uid: None,                           // No key UID yet
+                    capabilities: self.capabilities,         // Use capabilities set above
+                };
+
+                // Store the application info
+                self.application_info = Some(app_info.clone());
+
+                Ok(app_info)
+            }
         }
     }
 
     /// Initialize the Keycard card (factory reset)
     /// IMPORTANT: This will erase all data on the card
-    pub fn initialize(&mut self, confirm: bool) -> Result<()> {
+    pub fn initialize(&mut self, secrets: &Secrets, confirm: bool) -> Result<()> {
         // Check if the card supports credential management
         self.capabilities
             .require_capability(Capability::CredentialsManagement)?;
@@ -219,7 +232,7 @@ impl<E: Executor> Keycard<E> {
         match self.card_public_key {
             Some(card_pubkey) => {
                 // Create the initialization command
-                let cmd = InitCommand::with_card_pubkey(card_pubkey);
+                let cmd = InitCommand::with_card_pubkey_and_secrets(card_pubkey, secrets);
 
                 // Execute the command
                 self.executor.execute(&cmd)?;

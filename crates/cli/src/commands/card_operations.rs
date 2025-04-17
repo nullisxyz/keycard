@@ -49,11 +49,11 @@ pub fn init_command(
         Secrets::new(&pin, &puk, &pairing_password)
     } else {
         debug!("Generating random secrets");
-        Secrets::generate()
+        Secrets::generate_v3_1(3, 5, true)
     };
 
     // Initialize the card
-    keycard.initialize(true)?;
+    keycard.initialize(&secrets, true)?;
 
     println!("Keycard initialized successfully!");
     println!("Secrets (SAVE THESE!):");
@@ -75,10 +75,9 @@ pub fn init_command(
 /// Pair with a card
 pub fn pair_command(
     transport: PcscTransport,
-    pairing_password: &str,
     output_file: Option<&PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
-    info!("Pairing with card using password: {}", pairing_password);
+    info!("Pairing with card");
 
     // Create a keycard instance
     let (mut keycard, _) = utils::session::initialize_keycard(transport)?;

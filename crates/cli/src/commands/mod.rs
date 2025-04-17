@@ -45,10 +45,6 @@ pub enum Commands {
 
     /// Pair with a Keycard
     Pair {
-        /// Pairing password
-        #[arg(required = true)]
-        pairing_password: String,
-
         /// Optional output file to save pairing info
         #[arg(short, long)]
         output: Option<PathBuf>,

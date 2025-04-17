@@ -98,6 +98,9 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         // Store the session
         self.session = Some(session);
 
+        self.security_level = SecurityLevel::enc_mac();
+        self.established = true;
+
         Ok(())
     }
 
@@ -123,7 +126,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
                 cryptogram: card_cryptogram,
                 challenge: card_challenge,
             }) => {
-                let expected_cryptogram = calculate_cryptogram(&shared_secret, &card_challenge);
+                let expected_cryptogram = calculate_cryptogram(&shared_secret, &challenge);
                 if card_cryptogram != expected_cryptogram {
                     return Err(crate::Error::PairingFailed);
                 }

@@ -66,10 +66,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 } => {
                     commands::init_command(transport, pin, puk, pairing_password, output.as_ref())?
                 }
-                Commands::Pair {
-                    pairing_password,
-                    output,
-                } => commands::pair_command(transport, pairing_password, output.as_ref())?,
+                Commands::Pair { output } => commands::pair_command(transport, output.as_ref())?,
                 Commands::GenerateKey { pin, pairing, path } => {
                     commands::generate_key_command(transport, pin.as_ref(), pairing, path.as_ref())?
                 }

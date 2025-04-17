@@ -605,8 +605,14 @@ where
             .try_into()
             .map_err(|_| Error::InvalidData("Failed to convert data to 32-byte array"))?;
 
+        // If KeyPath is Current or FromCurrent variant, we should set the derive_mode parameter to None.
+        let derive_mode = match key_path {
+            KeyPath::Current | KeyPath::FromCurrent(_) => None,
+            _ => Some(DeriveMode::Temporary),
+        };
+
         // Create sign command
-        let cmd = SignCommand::with(&data_array, &key_path, Some(DeriveMode::Temporary))?;
+        let cmd = SignCommand::with(&data_array, &key_path, derive_mode)?;
 
         // Execute the command
         let SignOk::Success { signature } = self.executor.execute_secure(&cmd)?;
@@ -658,11 +664,6 @@ where
 
         // Execute the command
         self.executor.execute_secure(&cmd)?;
-
-        // If we're changing the pairing secret, clear the pairing info
-        if credential_type == CredentialType::PairingSecret {
-            self.pairing_info = None;
-        }
 
         Ok(())
     }
@@ -761,7 +762,7 @@ where
         let cmd = GenerateMnemonicCommand::with_words(words)?;
 
         // Execute the command
-        let response = self.executor.execute_secure(&cmd)?;
+        let response = self.executor.execute(&cmd)?;
 
         // Convert to mnemonic phrase
         response.to_phrase()

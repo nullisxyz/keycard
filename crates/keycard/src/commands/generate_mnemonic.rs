@@ -29,6 +29,7 @@ apdu_pair! {
             ok {
                 /// Success response
                 #[sw(SW_NO_ERROR)]
+                #[payload(field = "words")]
                 Success {
                     /// An array of u16 representing the mnemonic words
                     words: Vec<u8>

@@ -106,7 +106,11 @@ pub async fn sign_command(
         // In this case, just sign with current key
         // The actual path derivation is handled internally by the keycard
         // and we are not passing a KeyPath object directly
-        keycard.sign(&data_bytes, nexum_keycard::KeyPath::Current, false)?
+        keycard.sign(
+            &data_bytes,
+            nexum_keycard::KeyPath::FromMaster(Some(derivation_path)),
+            false,
+        )?
     } else {
         info!("Signing with current key");
         keycard.sign(&data_bytes, nexum_keycard::KeyPath::Current, false)?
@@ -210,7 +214,7 @@ pub fn generate_mnemonic_command(
     let mnemonic = keycard.generate_mnemonic(words_count)?;
 
     println!("Generated {} word mnemonic:", words_count);
-    println!("{:?}", mnemonic);
+    println!("{}", mnemonic.to_phrase());
 
     Ok(())
 }

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use alloy_primitives::hex::encode;
+use alloy_primitives::hex::{self, encode};
 use bytes::{Bytes, BytesMut};
 use k256::elliptic_curve::generic_array::GenericArray;
 use nexum_apdu_core::prelude::*;
@@ -136,7 +136,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
                 let cmd = PairCommand::with_final_stage(&client_cryptogram);
 
                 // Send the command through the transport
-                let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+                let response_bytes = self.transmit_raw(&cmd.to_command().to_bytes())?;
                 match PairCommand::parse_response_raw(response_bytes) {
                     Ok(PairOk::FinalStageSuccess {
                         pairing_index,
@@ -174,7 +174,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
         // Execute the command directly using transmit_raw, similar to pair command
         let command_bytes = cmd.to_command().to_bytes();
-        let response_bytes = self.transport.transmit_raw(&command_bytes)?;
+        let response_bytes = self.transmit_raw(&command_bytes)?;
 
         // Parse the response
         VerifyPinCommand::parse_response_raw(Bytes::copy_from_slice(&response_bytes))
@@ -189,9 +189,23 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
     /// Encrypt APDU command data for the secure channel
     /// This method assumes the secure channel is established and session is initialized
     fn protect_command(&mut self, command: &[u8]) -> crate::Result<Vec<u8>> {
+        debug!(
+            "KeycardSCP protect_command: starting with raw command: {}",
+            hex::encode(command)
+        );
+
         // Parse the command into a Command object
         let command = Command::from_bytes(command)?;
         let payload = command.data().unwrap_or(&[]);
+
+        debug!(
+            "KeycardSCP protect_command: parsed command CLA={:02X} INS={:02X} P1={:02X} P2={:02X} data={}",
+            command.class(),
+            command.instruction(),
+            command.p1(),
+            command.p2(),
+            hex::encode(payload)
+        );
 
         // Ensure session is available
         let session = self.session.as_mut().unwrap();
@@ -202,6 +216,10 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
             encrypt_data(&mut data_to_encrypt, session.keys().enc(), session.iv());
 
         let encrypted_data = encrypted_bytes.to_vec();
+        debug!(
+            "KeycardSCP protect_command: encrypted data: {}",
+            hex::encode(&encrypted_data)
+        );
 
         // Prepare metadata for MAC calculation
         let mut meta = GenericArray::default();
@@ -210,28 +228,38 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         meta[2] = command.p1();
         meta[3] = command.p2();
         meta[4] = (encrypted_data.len() + 16) as u8; // Add MAC size
+        debug!(
+            "KeycardSCP protect_command: MAC metadata: {}",
+            hex::encode(&meta)
+        );
 
         // Update session IV / calculate MAC
         let encrypted_bytes_copy = Bytes::copy_from_slice(&encrypted_data);
         session.update_iv(&meta, &encrypted_bytes_copy);
+        debug!(
+            "KeycardSCP protect_command: updated IV/MAC: {}",
+            hex::encode(session.iv())
+        );
 
         // Combine MAC and encrypted data
         let mut data = BytesMut::with_capacity(16 + encrypted_data.len());
         data.extend_from_slice(session.iv().as_ref());
         data.extend_from_slice(&encrypted_data);
 
-        trace!(
-            "Encrypted command: cla={:02X}, ins={:02X}, p1={:02X}, p2={:02X}, data_len={}",
-            command.class(),
-            command.instruction(),
-            command.p1(),
-            command.p2(),
-            data.len()
+        debug!(
+            "KeycardSCP protect_command: final protected payload: {}",
+            hex::encode(&data)
         );
 
         // Create the protected command
         let protected_command = command.with_data(data);
-        Ok(protected_command.to_bytes().to_vec())
+        let result = protected_command.to_bytes().to_vec();
+        debug!(
+            "KeycardSCP protect_command: final protected command: {}",
+            hex::encode(&result)
+        );
+
+        Ok(result)
     }
 
     /// Process response data from the secure channel
@@ -311,7 +339,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         let cmd = MutuallyAuthenticateCommand::with_challenge(&challenge);
 
         // Send through transport
-        let response_bytes = self.transport.transmit_raw(&cmd.to_command().to_bytes())?;
+        let response_bytes = self.transmit_raw(&cmd.to_command().to_bytes())?;
 
         // Parse the response
         match MutuallyAuthenticateCommand::parse_response_raw(response_bytes) {
@@ -418,6 +446,9 @@ impl<T: CardTransport> CardTransport for KeycardSecureChannel<T> {
             self.is_established()
         );
 
+        // Log the raw command bytes
+        debug!("KeycardSCP raw command: {}", hex::encode(command));
+
         if self.is_established() && self.session.is_some() {
             debug!("KeycardSCP: protecting command and processing response through secure channel");
 
@@ -426,16 +457,33 @@ impl<T: CardTransport> CardTransport for KeycardSecureChannel<T> {
                 .protect_command(command)
                 .map_err(|e| Error::message(e.to_string()))?;
 
+            // Log the protected command
+            debug!("KeycardSCP protected command: {}", hex::encode(&protected));
+
             // Send the protected command through the underlying transport
             let response = self.transport.transmit_raw(&protected)?;
 
+            // Log the protected response
+            debug!("KeycardSCP protected response: {}", hex::encode(&response));
+
             // Process the response through the secure channel
-            self.process_response(&response)
-                .map_err(|e| Error::message(e.to_string()))
+            let result = self
+                .process_response(&response)
+                .map_err(|e| Error::message(e.to_string()))?;
+
+            // Log the processed response
+            debug!("KeycardSCP processed response: {}", hex::encode(&result));
+
+            Ok(result)
         } else {
             // If channel not established, pass through to underlying transport directly
             debug!("KeycardSCP: passing command through to underlying transport");
-            self.transport.transmit_raw(command)
+            let response = self.transport.transmit_raw(command)?;
+
+            // Log the raw response
+            debug!("KeycardSCP raw response: {}", hex::encode(&response));
+
+            Ok(response)
         }
     }
 

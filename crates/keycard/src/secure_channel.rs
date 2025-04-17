@@ -98,10 +98,14 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         // Store the session
         self.session = Some(session);
 
-        self.security_level = SecurityLevel::enc_mac();
-        self.established = true;
-
-        Ok(())
+        // Mutually authenticate
+        match self.authenticate() {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                self.session = None;
+                Err(err)
+            }
+        }
     }
 
     /// Pair the card and initialize the secure channel
@@ -188,7 +192,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
     /// Encrypt APDU command data for the secure channel
     /// This method assumes the secure channel is established and session is initialized
-    fn protect_command(&mut self, command: &[u8]) -> crate::Result<Vec<u8>> {
+    fn protect_command(&mut self, command: &[u8]) -> crate::Result<Bytes> {
         debug!(
             "KeycardSCP protect_command: starting with raw command: {}",
             hex::encode(command)
@@ -212,10 +216,8 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
         // Encrypt the command data using the established session
         let mut data_to_encrypt = BytesMut::from(payload);
-        let encrypted_bytes =
-            encrypt_data(&mut data_to_encrypt, session.keys().enc(), session.iv());
+        let encrypted_data = encrypt_data(&mut data_to_encrypt, session.keys().enc(), session.iv());
 
-        let encrypted_data = encrypted_bytes.to_vec();
         debug!(
             "KeycardSCP protect_command: encrypted data: {}",
             hex::encode(&encrypted_data)
@@ -234,8 +236,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         );
 
         // Update session IV / calculate MAC
-        let encrypted_bytes_copy = Bytes::copy_from_slice(&encrypted_data);
-        session.update_iv(&meta, &encrypted_bytes_copy);
+        session.update_iv(&meta, &encrypted_data);
         debug!(
             "KeycardSCP protect_command: updated IV/MAC: {}",
             hex::encode(session.iv())
@@ -243,8 +244,8 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
         // Combine MAC and encrypted data
         let mut data = BytesMut::with_capacity(16 + encrypted_data.len());
-        data.extend_from_slice(session.iv().as_ref());
-        data.extend_from_slice(&encrypted_data);
+        data.extend(session.iv());
+        data.extend(&encrypted_data);
 
         debug!(
             "KeycardSCP protect_command: final protected payload: {}",
@@ -253,7 +254,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
         // Create the protected command
         let protected_command = command.with_data(data);
-        let result = protected_command.to_bytes().to_vec();
+        let result = protected_command.to_bytes();
         debug!(
             "KeycardSCP protect_command: final protected command: {}",
             hex::encode(&result)
@@ -313,12 +314,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
                 trace!("Decrypted response: len={}", decrypted_data.len());
 
-                // Create a new response with the decrypted data and status code
-                let mut response_bytes = BytesMut::from(&decrypted_data[..]);
-                let status = response.status();
-                response_bytes.extend_from_slice(&[status.sw1, status.sw2]);
-
-                Ok(Bytes::from(response_bytes))
+                Ok(decrypted_data)
             }
             None => {
                 // No data in response, just return the status
@@ -449,7 +445,7 @@ impl<T: CardTransport> CardTransport for KeycardSecureChannel<T> {
         // Log the raw command bytes
         debug!("KeycardSCP raw command: {}", hex::encode(command));
 
-        if self.is_established() && self.session.is_some() {
+        if self.session.is_some() {
             debug!("KeycardSCP: protecting command and processing response through secure channel");
 
             // Apply SCP protection - only when secure channel is established

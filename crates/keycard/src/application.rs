@@ -6,28 +6,11 @@
 use nexum_apdu_core::prelude::*;
 use nexum_apdu_globalplatform::commands::select::SelectCommand;
 
-use crate::commands::generate_key::GenerateKeyCommand;
-use crate::commands::generate_mnemonic::GenerateMnemonicCommand;
-use crate::commands::get_data::GetDataCommand;
-use crate::commands::get_status::GetStatusCommand;
-use crate::commands::ident::IdentCommand;
-use crate::commands::init::InitCommand;
-use crate::commands::load_key::LoadKeyCommand;
-use crate::commands::pin::{ChangePinCommand, UnblockPinCommand, VerifyPinCommand};
-use crate::commands::remove_key::RemoveKeyCommand;
-use crate::commands::select::ParsedSelectOk;
-use crate::commands::set_pinless_path::SetPinlessPathCommand;
-use crate::commands::sign::SignCommand;
-use crate::commands::store_data::StoreDataCommand;
-use crate::commands::unpair::UnpairCommand;
-use crate::commands::{DeriveMode, KeyPath, PersistentRecord};
+use crate::commands::*;
 use crate::constants::KEYCARD_AID;
 use crate::secure_channel::KeycardSecureChannel;
 use crate::types::Signature;
-use crate::{
-    ApplicationInfo, ApplicationStatus, Error, GenerateKeyOk, GetDataOk, GetStatusOk, IdentOk,
-    LoadKeyOk, PairingInfo, Result, SignOk,
-};
+use crate::{ApplicationInfo, ApplicationStatus, Error, PairingInfo, Result};
 
 /// Type for function that provides an input string (ie. PIN)
 pub type InputRequestFn = Box<dyn Fn(&str) -> String + Send + Sync>;

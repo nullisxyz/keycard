@@ -193,10 +193,9 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Extract status from response
-        if let GetStatusOk::ApplicationStatus { status } = response {
-            Ok(status)
-        } else {
-            Err(Error::Message("Unexpected response type".to_string()))
+        match response {
+            GetStatusOk::ApplicationStatus { status } => Ok(status),
+            _ => Err(Error::Message("Unexpected response type".to_string())),
         }
     }
 
@@ -209,10 +208,9 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Extract path from response
-        if let GetStatusOk::KeyPathStatus { path } = response {
-            Ok(path)
-        } else {
-            Err(Error::Message("Unexpected response type".to_string()))
+        match response {
+            GetStatusOk::KeyPathStatus { path } => Ok(path),
+            _ => Err(Error::Message("Unexpected response type".to_string())),
         }
     }
 
@@ -233,9 +231,8 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Return the key UID from the response
-        match response {
-            GenerateKeyOk::Success { key_uid } => Ok(key_uid),
-        }
+        let GenerateKeyOk::Success { key_uid } = response;
+        Ok(key_uid)
     }
 
     /// Sign data with the current key
@@ -277,9 +274,8 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Return the signature from the response
-        match response {
-            SignOk::Success { signature } => Ok(signature),
-        }
+        let SignOk::Success { signature } = response;
+        Ok(signature)
     }
 
     /// Change a credential (PIN, PUK, or pairing secret)
@@ -426,9 +422,8 @@ where
         let response = self.executor.execute(&cmd)?;
 
         // Return the signature from the response
-        match response {
-            IdentOk::Success { signature } => Ok(signature),
-        }
+        let IdentOk::Success { signature } = response;
+        Ok(signature)
     }
 
     /// Load a key into the card
@@ -452,9 +447,8 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Return the key UID from the response
-        match response {
-            LoadKeyOk::Success { key_uid } => Ok(key_uid),
-        }
+        let LoadKeyOk::Success { key_uid } = response;
+        Ok(key_uid)
     }
 
     /// Load an extended key into the card
@@ -480,9 +474,8 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Return the key UID from the response
-        match response {
-            LoadKeyOk::Success { key_uid } => Ok(key_uid),
-        }
+        let LoadKeyOk::Success { key_uid } = response;
+        Ok(key_uid)
     }
 
     /// Load a BIP39 seed into the card
@@ -505,9 +498,8 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Return the key UID from the response
-        match response {
-            LoadKeyOk::Success { key_uid } => Ok(key_uid),
-        }
+        let LoadKeyOk::Success { key_uid } = response;
+        Ok(key_uid)
     }
 
     /// Delete a key path (alias for remove_key)
@@ -560,9 +552,8 @@ where
         let response = self.executor.execute_secure(&cmd)?;
 
         // Extract data from the response
-        match response {
-            GetDataOk::Success { data } => Ok(data),
-        }
+        let GetDataOk::Success { data } = response;
+        Ok(data)
     }
 }
 

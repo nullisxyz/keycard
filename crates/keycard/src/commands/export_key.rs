@@ -4,7 +4,9 @@ use nexum_apdu_macros::apdu_pair;
 use crate::Keypair;
 
 use super::{CLA_GP, DeriveMode, KeyPath, prepare_derivation_parameters};
+use coins_bip32::path::DerivationPath;
 
+#[derive(Clone, Copy, Debug)]
 pub enum ExportOption {
     PrivateAndPublic = 0x00,
     PublicKeyOnly = 0x01,
@@ -20,7 +22,65 @@ apdu_pair! {
             required_security_level: SecurityLevel::full(),
 
             builders {
-                /// Create an EXPORT KEY command
+                /// Export the current key without derivation
+                pub fn from_current(what: ExportOption) -> Result<Self, crate::Error> {
+                    let command = Self::new(0x00, what as u8).with_le(0);
+                    Ok(command)
+                }
+
+                /// Export a key derived from the master key
+                pub fn from_master(
+                    what: ExportOption,
+                    path: Option<&DerivationPath>,
+                    make_current: bool,
+                ) -> Result<Self, crate::Error> {
+                    let derive_mode = if make_current {
+                        DeriveMode::Persistent
+                    } else {
+                        DeriveMode::Temporary
+                    };
+
+                    let key_path = match path {
+                        Some(path) => KeyPath::FromMaster(Some(path.clone())),
+                        None => KeyPath::FromMaster(None),
+                    };
+
+                    Self::with(what, &key_path, Some(derive_mode))
+                }
+
+                /// Export a key derived from the parent key
+                pub fn from_parent(
+                    what: ExportOption,
+                    path: &DerivationPath,
+                    make_current: bool,
+                ) -> Result<Self, crate::Error> {
+                    let derive_mode = if make_current {
+                        DeriveMode::Persistent
+                    } else {
+                        DeriveMode::Temporary
+                    };
+
+                    let key_path = KeyPath::FromParent(path.clone());
+                    Self::with(what, &key_path, Some(derive_mode))
+                }
+
+                /// Export a key derived from the current key
+                pub fn from_current_with_derivation(
+                    what: ExportOption,
+                    path: &DerivationPath,
+                    make_current: bool,
+                ) -> Result<Self, crate::Error> {
+                    let derive_mode = if make_current {
+                        DeriveMode::Persistent
+                    } else {
+                        DeriveMode::Temporary
+                    };
+
+                    let key_path = KeyPath::FromCurrent(path.clone());
+                    Self::with(what, &key_path, Some(derive_mode))
+                }
+
+                /// General purpose method (prefer using the more specific builders above)
                 pub fn with(
                     what: ExportOption,
                     key_path: &KeyPath,

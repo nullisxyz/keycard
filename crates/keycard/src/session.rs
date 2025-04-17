@@ -73,9 +73,10 @@ impl Session {
         // Send the command
         let command_bytes = cmd.to_command().to_bytes();
         let response_bytes = transport.transmit_raw(&command_bytes)?;
-        let response = OpenSecureChannelCommand::parse_response_raw(Bytes::copy_from_slice(&response_bytes))
-            .map_err(|e| Error::Message(e.to_string()))?;
-            
+        let response =
+            OpenSecureChannelCommand::parse_response_raw(Bytes::copy_from_slice(&response_bytes))
+                .map_err(|e| Error::Message(e.to_string()))?;
+
         // Extract the challenge and IV using pattern matching for type safety
         let OpenSecureChannelOk::Success { challenge, iv } = response;
 

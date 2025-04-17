@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use alloy_primitives::hex;
 use nexum_apdu_transport_pcsc::PcscTransport;
-use nexum_keycard::{Keycard, ParsedSelectOk, PairingInfo};
+use nexum_keycard::{Keycard, PairingInfo, ParsedSelectOk};
 use tracing::{debug, info, warn};
 
 use crate::utils::prompt_for_pin;
@@ -10,13 +10,7 @@ use crate::utils::prompt_for_pin;
 /// Initialize a Keycard session with a transport
 pub fn initialize_keycard(
     transport: PcscTransport,
-) -> Result<
-    (
-        Keycard<PcscTransport>,
-        ParsedSelectOk,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<(Keycard<PcscTransport>, ParsedSelectOk), Box<dyn std::error::Error>> {
     // Create a keycard instance with the transport
     let mut keycard = Keycard::new(transport);
 
@@ -75,12 +69,16 @@ pub fn create_secure_channel(
             // Load pairing info from file
             let pairing_info = load_pairing_from_file(file_path)?;
             keycard.set_pairing_info(pairing_info.clone());
-            info!("Loaded pairing info from file with index {}", pairing_info.index);
+            info!(
+                "Loaded pairing info from file with index {}",
+                pairing_info.index
+            );
         } else if let (Some(key_hex), Some(idx)) = (key_hex, index) {
             // Use provided key and index
-            let pairing_key: [u8; 32] = hex::decode(key_hex.trim_start_matches("0x"))?
-                .try_into()
-                .map_err(|_| format!("Invalid pairing key length: expected 32 bytes"))?;
+            let pairing_key: [u8; 32] =
+                hex::decode(key_hex.trim_start_matches("0x"))?
+                    .try_into()
+                    .map_err(|_| format!("Invalid pairing key length: expected 32 bytes"))?;
             let pairing_info = PairingInfo {
                 key: pairing_key.into(),
                 index: idx,
@@ -94,20 +92,23 @@ pub fn create_secure_channel(
     if keycard.pairing_info().is_none() {
         return Err("No pairing information available".into());
     }
-    
+
     // Select the keycard to get application info
     debug!("Selecting keycard application to prepare secure channel");
     keycard.select_keycard()?;
-    
+
     // In a full implementation with the KeycardSCP transport,
     // we would call keycard.into_secure_channel() here.
     // Since that requires PcscTransport to be cloneable (which it isn't),
     // we'll adapt our CLI to work directly with the PcscTransport
     // and simulate the secure channel operations for CLI demonstration.
-    
+
     warn!("Using simplified secure channel implementation for demonstration");
-    debug!("Paired with key index {}", keycard.pairing_info().unwrap().index);
-    
+    debug!(
+        "Paired with key index {}",
+        keycard.pairing_info().unwrap().index
+    );
+
     // Return the original keycard as if it had a secure channel
     Ok(keycard)
 }
@@ -122,12 +123,14 @@ pub fn ensure_secure_channel(
     // Create a secure keycard (in our simplified model, this is the same as
     // adding pairing info to the regular keycard)
     let secure_keycard = create_secure_channel(keycard, file, key_hex, index)?;
-    
-    // Since our implementation doesn't actually use a secure channel, 
+
+    // Since our implementation doesn't actually use a secure channel,
     // we'll just simulate it for the CLI
-    info!("Secure channel opened successfully with key index {}", 
-         secure_keycard.pairing_info().unwrap().index);
-    
+    info!(
+        "Secure channel opened successfully with key index {}",
+        secure_keycard.pairing_info().unwrap().index
+    );
+
     Ok(secure_keycard)
 }
 

@@ -4,7 +4,7 @@ use nexum_apdu_transport_pcsc::PcscTransport;
 use std::path::PathBuf;
 use tracing::info;
 
-use crate::utils::{session, PairingArgs};
+use crate::utils::{PairingArgs, session};
 
 /// Verify PIN to test authentication
 pub fn verify_pin_command(
@@ -16,10 +16,10 @@ pub fn verify_pin_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize keycard
     let (keycard, _) = session::initialize_keycard(transport)?;
-    
+
     // Create secure keycard with session
     let mut secure_keycard = session::ensure_secure_channel(keycard, file, pairing_key, index)?;
-    
+
     // Simulate PIN verification (in a real implementation, this would call verify_pin)
     info!("Simulating PIN verification: {}", pin);
     println!("\u{1F513} PIN verified successfully!");
@@ -36,7 +36,7 @@ pub fn change_credentials_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize keycard
     let (keycard, _) = session::initialize_keycard(transport)?;
-    
+
     // Add pairing info
     let _secure_keycard = session::ensure_secure_channel(
         keycard,
@@ -72,7 +72,7 @@ pub fn unblock_pin_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize keycard
     let (keycard, _) = session::initialize_keycard(transport)?;
-    
+
     // Create secure keycard with session
     let _secure_keycard = session::ensure_secure_channel(
         keycard,
@@ -83,7 +83,7 @@ pub fn unblock_pin_command(
 
     // Simulate unblocking PIN (in a real implementation, this would call unblock_pin)
     info!("Simulating PIN unblock. PUK: {}, New PIN: {}", puk, new_pin);
-    
+
     println!("\u{1F513} PIN unblocked successfully!");
     println!("New PIN set to: {}", new_pin);
     Ok(())

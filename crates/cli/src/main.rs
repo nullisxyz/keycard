@@ -64,16 +64,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     output,
                 } => commands::pair_command(transport, pairing_password, output.as_ref())?,
                 Commands::OpenSecureChannel { file, key, index } => {
-                    commands::open_secure_channel_command(transport, file.as_ref(), key.as_ref(), *index)?
+                    commands::open_secure_channel_command(
+                        transport,
+                        file.as_ref(),
+                        key.as_ref(),
+                        *index,
+                    )?
                 }
                 Commands::VerifyPin {
                     pin,
                     pairing_key,
                     index,
                     file,
-                } => {
-                    commands::verify_pin_command(transport, pin, pairing_key.as_ref(), *index, file.as_ref())?
-                }
+                } => commands::verify_pin_command(
+                    transport,
+                    pin,
+                    pairing_key.as_ref(),
+                    *index,
+                    file.as_ref(),
+                )?,
                 Commands::GenerateKey {
                     pin,
                     pairing_key,
@@ -105,7 +114,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .await?
                 }
-                Commands::ExportPairing { output } => commands::export_pairing_command(transport, output)?,
+                Commands::ExportPairing { output } => {
+                    commands::export_pairing_command(transport, output)?
+                }
                 Commands::ChangeCredentials {
                     credential_type,
                     new_value,

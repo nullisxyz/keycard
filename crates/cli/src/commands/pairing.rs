@@ -46,10 +46,10 @@ pub fn open_secure_channel_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize keycard
     let (keycard, _) = session::initialize_keycard(transport)?;
-    
+
     // Create secure keycard and open channel
     let _secure_keycard = session::ensure_secure_channel(keycard, file, key_hex, index)?;
-    
+
     // If we got here, the secure channel is open
     println!("\u{1F512} Secure channel opened successfully!");
     Ok(())
@@ -64,7 +64,10 @@ pub fn export_pairing_command(
 
     if let Some(pairing_info) = keycard.pairing_info() {
         utils::save_pairing_to_file(pairing_info, output)?;
-        println!("\u{1F4BE} Pairing information exported to: {}", output.display());
+        println!(
+            "\u{1F4BE} Pairing information exported to: {}",
+            output.display()
+        );
         Ok(())
     } else {
         Err("No pairing information available. Please pair with the card first.".into())

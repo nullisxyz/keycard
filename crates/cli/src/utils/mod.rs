@@ -1,5 +1,5 @@
-use clap::Args;
 use alloy_primitives::hex;
+use clap::Args;
 use nexum_keycard::PairingInfo;
 use std::fs::File;
 use std::io::Write;

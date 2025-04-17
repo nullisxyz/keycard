@@ -15,6 +15,42 @@ use crate::session::Session;
 use crate::types::PairingInfo;
 use crate::{Challenge, MutuallyAuthenticateOk, PairCommand, PairOk};
 
+/// Extension trait for KeycardSecureChannel functionality
+pub trait KeycardSecureChannelExt: CardTransport {
+    /// Initialize a session with card public key and pairing info
+    fn initialize_session(
+        &mut self,
+        card_public_key: &k256::PublicKey,
+        pairing_info: &PairingInfo,
+    ) -> crate::Result<()>;
+
+    /// Pair with the card using a password
+    fn pair(&mut self, password: &str) -> crate::Result<PairingInfo>;
+
+    /// Verify PIN to gain secure access
+    fn verify_pin(&mut self, pin: &str) -> crate::Result<bool>;
+}
+
+/// Implement the extension trait for KeycardSecureChannel
+impl<T: CardTransport> KeycardSecureChannelExt for KeycardSecureChannel<T> {
+    fn initialize_session(
+        &mut self,
+        card_public_key: &k256::PublicKey,
+        pairing_info: &PairingInfo,
+    ) -> crate::Result<()> {
+        self.initialize_session(card_public_key, pairing_info)
+            .map_err(crate::Error::from)
+    }
+
+    fn pair(&mut self, password: &str) -> crate::Result<PairingInfo> {
+        self.pair(password).map_err(crate::Error::from)
+    }
+
+    fn verify_pin(&mut self, pin: &str) -> crate::Result<bool> {
+        self.verify_pin(pin).map_err(crate::Error::from)
+    }
+}
+
 /// Secure Channel Protocol implementation for Keycard
 pub struct KeycardSecureChannel<T: CardTransport> {
     /// The underlying transport
@@ -67,10 +103,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
 
     /// Pair the card and initialize the secure channel
     /// This is a complete process to pair with a card
-    pub fn pair<E>(&mut self, pairing_secret: &str) -> crate::Result<PairingInfo>
-    where
-        E: Executor,
-    {
+    pub fn pair(&mut self, pairing_secret: &str) -> crate::Result<PairingInfo> {
         debug!("Starting pairing process with pairing password");
 
         // Determine the shared secret
@@ -128,10 +161,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
     }
 
     /// Verify PIN using the PIN request callback if available
-    pub fn verify_pin<E>(&mut self, executor: &mut E, pin: &str) -> crate::Result<bool>
-    where
-        E: Executor,
-    {
+    pub fn verify_pin(&mut self, pin: &str) -> crate::Result<bool> {
         if !self.is_established() {
             return Err(Error::other("Secure channel not established").into());
         }
@@ -139,8 +169,13 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         // Create the command
         let cmd = VerifyPinCommand::with_pin(&pin);
 
-        // Execute the command
-        executor.execute(&cmd)?;
+        // Execute the command directly using transmit_raw, similar to pair command
+        let command_bytes = cmd.to_command().to_bytes();
+        let response_bytes = self.transport.transmit_raw(&command_bytes)?;
+
+        // Parse the response
+        VerifyPinCommand::parse_response_raw(Bytes::copy_from_slice(&response_bytes))
+            .map_err(|e| Error::Message(e.to_string()))?;
 
         // At this point, it's guaranteed that the PIN was verified successfully
         self.security_level = SecurityLevel::full();

@@ -8,6 +8,7 @@ use nexum_apdu_globalplatform::commands::select::SelectCommand;
 
 use crate::commands::*;
 use crate::constants::KEYCARD_AID;
+use crate::secure_channel::KeycardSecureChannelExt;
 use crate::types::Signature;
 use crate::{ApplicationInfo, ApplicationStatus, Error, PairingInfo, Result};
 
@@ -34,19 +35,27 @@ pub struct Keycard<E: Executor> {
 
 impl<E: Executor> Keycard<E> {
     /// Create a new Keycard instance with an executor
+    ///
+    /// This constructor automatically selects the Keycard application and fetches its information
     pub fn new(
         executor: E,
         input_request_callback: InputRequestFn,
         confirmation_callback: ConfirmationFn,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let mut keycard = Self {
             executor,
             pairing_info: None,
             card_public_key: None,
             application_info: None,
             input_request_callback,
             confirmation_callback,
-        }
+        };
+
+        // Automatically select the Keycard application to fetch information
+        let app_info = keycard.select_keycard()?;
+        keycard.application_info = Some(app_info);
+
+        Ok(keycard)
     }
 
     /// Create a new Keycard instance with an executor and pairing info
@@ -54,18 +63,23 @@ impl<E: Executor> Keycard<E> {
         executor: E,
         pairing_info: PairingInfo,
         card_public_key: k256::PublicKey,
-        application_info: Option<ApplicationInfo>,
         input_request_callback: InputRequestFn,
         confirmation_callback: ConfirmationFn,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let mut keycard = Self {
             executor,
             pairing_info: Some(pairing_info),
             card_public_key: Some(card_public_key),
-            application_info,
+            application_info: None,
             input_request_callback,
             confirmation_callback,
-        }
+        };
+
+        // Automatically select the Keycard application to fetch information
+        let app_info = keycard.select_keycard()?;
+        keycard.application_info = Some(app_info);
+
+        Ok(keycard)
     }
 
     /// Set the callback for requesting input
@@ -99,6 +113,24 @@ impl<E: Executor> Keycard<E> {
     /// Set or update the pairing info for this Keycard
     pub fn set_pairing_info(&mut self, pairing_info: PairingInfo) {
         self.pairing_info = Some(pairing_info);
+    }
+
+    /// Load pairing information from external source
+    ///
+    /// This method allows setting up the Keycard with pairing information that was previously saved.
+    /// It returns an error if the card public key is not available, which is needed for secure channel.
+    pub fn load_pairing(&mut self, pairing_info: PairingInfo) -> Result<()> {
+        // Check if we have card public key (needed for secure channel)
+        if self.card_public_key.is_none() {
+            return Err(Error::Message(
+                "Card public key is required to load pairing".to_string(),
+            ));
+        }
+
+        // Store the pairing info
+        self.pairing_info = Some(pairing_info);
+
+        Ok(())
     }
 
     /// Get the pairing info for this Keycard
@@ -187,6 +219,7 @@ impl<E: Executor> Keycard<E> {
 impl<E> Keycard<E>
 where
     E: Executor + SecureChannelExecutor,
+    E::Transport: crate::secure_channel::KeycardSecureChannelExt,
 {
     /// Check if the secure channel is open
     pub fn is_secure_channel_open(&self) -> bool {
@@ -195,13 +228,69 @@ where
 
     /// Open the secure channel with the card
     pub fn open_secure_channel(&mut self) -> Result<()> {
+        // Check if we have pairing info
+        if self.pairing_info.is_none() {
+            return Err(Error::Message(
+                "No pairing information available".to_string(),
+            ));
+        }
+
+        // Check if we have card public key
+        if self.card_public_key.is_none() {
+            return Err(Error::Message("No card public key available".to_string()));
+        }
+
+        // Get underlying transport to initialize session
+        let transport = self.executor.transport_mut();
+
+        // Initialize session with pairing info and card public key
+        transport.initialize_session(
+            self.card_public_key.as_ref().unwrap(),
+            self.pairing_info.as_ref().unwrap(),
+        )?;
+
         // Open the secure channel
         self.executor.open_secure_channel().map_err(Error::from)
     }
 
-    /// Check if PIN is verified (security level includes authentication)
-    pub fn is_pin_verified(&self) -> bool {
-        self.executor.security_level().authentication
+    /// Pair with the card
+    pub fn pair(&mut self) -> Result<PairingInfo> {
+        // Get the pairing password from the user
+        let password = self.request_input("Enter pairing password");
+
+        // Get underlying transport to perform pairing
+        let transport = self.executor.transport_mut();
+
+        // Perform pairing with updated method signature
+        let pairing_info = transport.pair(&password)?;
+
+        // Store the pairing info
+        self.pairing_info = Some(pairing_info.clone());
+
+        Ok(pairing_info)
+    }
+
+    /// Establish a secure session with the card
+    ///
+    /// This method provides a convenient way to perform all the steps needed to establish
+    /// a secure session with the card: pairing, opening secure channel, and verifying PIN.
+    /// If pairing info is already available, it will use that instead of pairing again.
+    pub fn establish_session(&mut self, verify_pin: bool) -> Result<()> {
+        // Check if we need to pair
+        if self.pairing_info.is_none() {
+            // Perform pairing
+            self.pair()?;
+        }
+
+        // Open secure channel
+        self.open_secure_channel()?;
+
+        // Verify PIN if requested
+        if verify_pin {
+            self.verify_pin()?;
+        }
+
+        Ok(())
     }
 
     /// Verify the PIN to gain full access
@@ -210,11 +299,19 @@ where
         // Get the PIN from the user
         let pin = self.request_input("Enter your PIN");
 
-        // Create the command
-        let cmd = VerifyPinCommand::with_pin(&pin);
+        // Check if secure channel is open first
+        if !self.is_secure_channel_open() {
+            return Err(Error::Message(
+                "Secure channel must be open to verify PIN".to_string(),
+            ));
+        }
 
-        // Execute the command with security level check
-        self.executor.execute_secure(&cmd)?;
+        // Get the transport and directly call its verify_pin method
+        let transport = self.executor.transport_mut();
+
+        // Call verify_pin on the transport which will handle both
+        // command execution and security level update
+        transport.verify_pin(&pin)?;
 
         Ok(())
     }

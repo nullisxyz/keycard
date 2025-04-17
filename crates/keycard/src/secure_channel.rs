@@ -114,7 +114,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         debug!("Starting pairing process with pairing password");
 
         // Determine the shared secret
-        let shared_secret = generate_pairing_token(&pairing_secret);
+        let shared_secret = generate_pairing_token(pairing_secret);
 
         // Generate a random challenge
         let mut challenge = Challenge::default();
@@ -148,8 +148,8 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
                     }) => {
                         let key = {
                             let mut hasher = Sha256::new();
-                            hasher.update(&shared_secret);
-                            hasher.update(&salt);
+                            hasher.update(shared_secret);
+                            hasher.update(salt);
                             hasher.finalize()
                         };
 
@@ -174,7 +174,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         }
 
         // Create the command
-        let cmd = VerifyPinCommand::with_pin(&pin);
+        let cmd = VerifyPinCommand::with_pin(pin);
 
         // Execute the command directly using transmit_raw, similar to pair command
         let command_bytes = cmd.to_command().to_bytes();
@@ -232,7 +232,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         meta[4] = (encrypted_data.len() + 16) as u8; // Add MAC size
         debug!(
             "KeycardSCP protect_command: MAC metadata: {}",
-            hex::encode(&meta)
+            hex::encode(meta)
         );
 
         // Update session IV / calculate MAC

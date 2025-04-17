@@ -5,6 +5,8 @@ use nexum_apdu_transport_pcsc::PcscTransport;
 use nexum_keycard::{ApplicationInfo, Keycard, KeycardSecureChannel, PairingInfo};
 use tracing::{debug, error};
 
+type KeycardExecutor = CardExecutor<KeycardSecureChannel<PcscTransport>>;
+
 /// Default input request handler (asks for PIN/PUK/etc)
 pub fn default_input_request(prompt: &str) -> String {
     use std::io::{self, Write};
@@ -29,13 +31,7 @@ pub fn default_confirmation(message: &str) -> bool {
 /// Initialize a keycard from transport and select the application
 pub fn initialize_keycard(
     transport: PcscTransport,
-) -> Result<
-    (
-        Keycard<CardExecutor<KeycardSecureChannel<PcscTransport>>>,
-        ApplicationInfo,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<(Keycard<KeycardExecutor>, ApplicationInfo), Box<dyn std::error::Error>> {
     // Create a keycard secure channel around the transport
     let secure_channel = KeycardSecureChannel::new(transport);
 
@@ -59,13 +55,7 @@ pub fn initialize_keycard(
 pub fn initialize_keycard_with_pairing(
     transport: PcscTransport,
     pairing_args: &crate::utils::PairingArgs,
-) -> Result<
-    (
-        Keycard<CardExecutor<KeycardSecureChannel<PcscTransport>>>,
-        Option<ApplicationInfo>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<(Keycard<KeycardExecutor>, Option<ApplicationInfo>), Box<dyn std::error::Error>> {
     // Create a keycard secure channel around the transport
     let secure_channel = KeycardSecureChannel::new(transport);
 

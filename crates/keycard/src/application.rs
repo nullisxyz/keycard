@@ -220,12 +220,12 @@ impl<E: Executor> Keycard<E> {
             .require_capability(Capability::CredentialsManagement)?;
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(
+        if confirm
+            && !self.confirm_operation(
                 "Initialize the card? This will erase all data and cannot be undone.",
-            ) {
-                return Err(Error::UserCancelled);
-            }
+            )
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Check if we have the card's public key
@@ -250,12 +250,12 @@ impl<E: Executor> Keycard<E> {
 
     /// Request input using the input request callback
     fn request_input(&self, prompt: &str) -> String {
-        (&self.input_request_callback)(prompt)
+        (self.input_request_callback)(prompt)
     }
 
     /// Confirm a critical operation using the confirmation callback if available
     fn confirm_operation(&self, operation_description: &str) -> bool {
-        (&self.confirmation_callback)(operation_description)
+        (self.confirmation_callback)(operation_description)
     }
 }
 
@@ -401,12 +401,12 @@ where
             .require_capability(Capability::KeyManagement)?;
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(
+        if confirm
+            && !self.confirm_operation(
                 "Generate a new keypair on the card? This will overwrite any existing key.",
-            ) {
-                return Err(Error::UserCancelled);
-            }
+            )
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create the command
@@ -438,7 +438,7 @@ where
         let ExportKeyOk::Success { keypair } = response;
 
         // Convert to appropriate ExportedKey type based on what was requested
-        ExportedKey::try_from_keypair(keypair, what.clone())
+        ExportedKey::try_from_keypair(keypair, what)
     }
 
     /// Export a key derived from the master key
@@ -455,10 +455,11 @@ where
         make_current: bool,
         confirm: bool,
     ) -> Result<ExportedKey> {
-        if make_current && confirm {
-            if !self.confirm_operation("Make the key derived from master the current key?") {
-                return Err(Error::UserCancelled);
-            }
+        if make_current
+            && confirm
+            && !self.confirm_operation("Make the key derived from master the current key?")
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create command to export key derived from master
@@ -471,7 +472,7 @@ where
         let ExportKeyOk::Success { keypair } = response;
 
         // Convert to appropriate ExportedKey type based on what was requested
-        ExportedKey::try_from_keypair(keypair, what.clone())
+        ExportedKey::try_from_keypair(keypair, what)
     }
 
     /// Export a key derived from the parent key
@@ -488,10 +489,8 @@ where
         make_current: bool,
         confirm: bool,
     ) -> Result<ExportedKey> {
-        if make_current && confirm {
-            if !self.confirm_operation("Make derived key current?") {
-                return Err(Error::UserCancelled);
-            }
+        if make_current && confirm && !self.confirm_operation("Make derived key current?") {
+            return Err(Error::UserCancelled);
         }
 
         // Create command to export key derived from parent
@@ -521,10 +520,8 @@ where
         make_current: bool,
         confirm: bool,
     ) -> Result<ExportedKey> {
-        if make_current && confirm {
-            if !self.confirm_operation("Make derived key current?") {
-                return Err(Error::UserCancelled);
-            }
+        if make_current && confirm && !self.confirm_operation("Make derived key current?") {
+            return Err(Error::UserCancelled);
         }
 
         // Create command to export key derived from current
@@ -590,10 +587,8 @@ where
         };
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(&format!("Sign data using {}?", path_str)) {
-                return Err(Error::UserCancelled);
-            }
+        if confirm && !self.confirm_operation(&format!("Sign data using {}?", path_str)) {
+            return Err(Error::UserCancelled);
         }
 
         // Create the sign command - requires a 32-byte hash
@@ -647,10 +642,8 @@ where
         };
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(description) {
-                return Err(Error::UserCancelled);
-            }
+        if confirm && !self.confirm_operation(description) {
+            return Err(Error::UserCancelled);
         }
 
         // Create the change command based on credential type
@@ -675,10 +668,10 @@ where
             .require_capability(Capability::CredentialsManagement)?;
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation("Unblock the PIN? This will set a new PIN using the PUK.") {
-                return Err(Error::UserCancelled);
-            }
+        if confirm
+            && !self.confirm_operation("Unblock the PIN? This will set a new PIN using the PUK.")
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create the unblock PIN command
@@ -697,12 +690,11 @@ where
             .require_capability(Capability::KeyManagement)?;
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self
+        if confirm
+            && !self
                 .confirm_operation("Remove the current key from the card? This cannot be undone.")
-            {
-                return Err(Error::UserCancelled);
-            }
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create the remove key command
@@ -727,10 +719,8 @@ where
         };
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(&description) {
-                return Err(Error::UserCancelled);
-            }
+        if confirm && !self.confirm_operation(&description) {
+            return Err(Error::UserCancelled);
         }
 
         // Create the command
@@ -796,12 +786,12 @@ where
             .require_capability(Capability::KeyManagement)?;
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(
+        if confirm
+            && !self.confirm_operation(
                 "Load a new key into the card? This will overwrite any existing key.",
-            ) {
-                return Err(Error::UserCancelled);
-            }
+            )
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create the load key command
@@ -824,12 +814,12 @@ where
         confirm: bool,
     ) -> Result<[u8; 32]> {
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(
+        if confirm
+            && !self.confirm_operation(
                 "Load an extended key into the card? This will overwrite any existing key.",
-            ) {
-                return Err(Error::UserCancelled);
-            }
+            )
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create the load key command
@@ -846,12 +836,12 @@ where
     /// Load a BIP39 seed into the card
     pub fn load_seed(&mut self, seed: &[u8; 64], confirm: bool) -> Result<[u8; 32]> {
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(
+        if confirm
+            && !self.confirm_operation(
                 "Load a BIP39 seed into the card? This will overwrite any existing key.",
-            ) {
-                return Err(Error::UserCancelled);
-            }
+            )
+        {
+            return Err(Error::UserCancelled);
         }
 
         // Create the load key command
@@ -872,10 +862,8 @@ where
             .require_capability(Capability::SecureChannel)?;
 
         // Confirm the operation if a confirmation function is provided
-        if confirm {
-            if !self.confirm_operation(&format!("Unpair slot {} from the card?", index)) {
-                return Err(Error::UserCancelled);
-            }
+        if confirm && !self.confirm_operation(&format!("Unpair slot {} from the card?", index)) {
+            return Err(Error::UserCancelled);
         }
 
         // Create the unpair command

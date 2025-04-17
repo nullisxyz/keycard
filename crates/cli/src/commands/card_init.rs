@@ -40,7 +40,7 @@ pub fn init_command(
 
     // Check if card is in pre-initialized state
     match select_response {
-        ParsedSelectOk::PreInitialized(_) => {
+        ParsedSelectOk::Uninitialized(_) => {
             // Create secrets based on provided values or generate them
             let secrets = if pin.is_some() || puk.is_some() || pairing_password.is_some() {
                 let pin = pin.clone().unwrap_or_else(|| "123456".to_string());

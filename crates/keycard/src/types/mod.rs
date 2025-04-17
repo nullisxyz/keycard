@@ -8,7 +8,7 @@ mod version;
 
 pub use application_info::ApplicationInfo;
 pub use application_status::ApplicationStatus;
-pub use capabilities::Capabilities;
+pub use capabilities::{Capabilities, Capability};
 use iso7816_tlv::ber::{Tag, Tlv, Value};
 pub use keypair::*;
 pub use pairing_info::PairingInfo;

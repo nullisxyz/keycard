@@ -9,7 +9,7 @@ use nexum_apdu_globalplatform::commands::select::SelectCommand;
 use crate::commands::*;
 use crate::constants::KEYCARD_AID;
 use crate::secure_channel::KeycardSecureChannelExt;
-use crate::types::Signature;
+use crate::types::{Capabilities, Capability, Signature};
 use crate::{ApplicationInfo, ApplicationStatus, Error, PairingInfo, Result};
 
 /// Type for function that provides an input string (ie. PIN)
@@ -27,6 +27,8 @@ pub struct Keycard<E: Executor> {
     card_public_key: Option<k256::PublicKey>,
     /// Application info retrieved during selection
     application_info: Option<ApplicationInfo>,
+    /// Card capabilities
+    capabilities: Capabilities,
     /// Callback for requesting input
     input_request_callback: InputRequestFn,
     /// Callback for confirming critical operations
@@ -47,6 +49,7 @@ impl<E: Executor> Keycard<E> {
             pairing_info: None,
             card_public_key: None,
             application_info: None,
+            capabilities: Capabilities::empty(),
             input_request_callback,
             confirmation_callback,
         };
@@ -71,6 +74,7 @@ impl<E: Executor> Keycard<E> {
             pairing_info: Some(pairing_info),
             card_public_key: Some(card_public_key),
             application_info: None,
+            capabilities: Capabilities::empty(),
             input_request_callback,
             confirmation_callback,
         };
@@ -150,32 +154,56 @@ impl<E: Executor> Keycard<E> {
         let parsed = ParsedSelectOk::try_from(select_response)?;
 
         // Extract and store the information
-        match parsed {
-            ParsedSelectOk::ApplicationInfo(info) => {
+        match &parsed {
+            ParsedSelectOk::InitializedWithKey(info) | ParsedSelectOk::InitializedNoKey(info) => {
                 // Store the application info
                 self.application_info = Some(info.clone());
 
-                // Extract and store the public key if available
-                if let Some(pk) = info.public_key {
-                    self.card_public_key = Some(pk);
-                }
+                // Store capabilities
+                self.capabilities = info.capabilities;
 
+                // Extract and store the public key if available
+                if let Some(pk) = &info.public_key {
+                    self.card_public_key = Some(*pk);
+                }
+            }
+            ParsedSelectOk::Uninitialized(maybe_key) => {
+                if let Some(key) = maybe_key {
+                    self.card_public_key = Some(*key);
+
+                    // For uninitialized cards with a public key, we assume they support
+                    // secure channel and credentials management capabilities
+                    self.capabilities = Capabilities::new(&[
+                        Capability::SecureChannel,
+                        Capability::CredentialsManagement,
+                    ]);
+                } else {
+                    // Uninitialized without a public key has at least credentials management capabilities
+                    self.capabilities = Capabilities::new(&[Capability::CredentialsManagement]);
+                }
+            }
+        }
+
+        match parsed {
+            ParsedSelectOk::InitializedWithKey(info) => Ok(info),
+            ParsedSelectOk::InitializedNoKey(info) => {
+                // Returns ApplicationInfo but warns that card is not initialized
+                // This allows consumers to see the card state but handle initialization
                 Ok(info)
             }
-            ParsedSelectOk::PreInitialized(maybe_key) => {
-                if let Some(key) = maybe_key {
-                    self.card_public_key = Some(key);
-                }
-                Err(Error::Message(
-                    "Card is in pre-initialized state".to_string(),
-                ))
-            }
+            ParsedSelectOk::Uninitialized(_) => Err(Error::Message(
+                "Card is in an uninitialized state".to_string(),
+            )),
         }
     }
 
     /// Initialize the Keycard card (factory reset)
     /// IMPORTANT: This will erase all data on the card
     pub fn initialize(&mut self, confirm: bool) -> Result<()> {
+        // Check if the card supports credential management
+        self.capabilities
+            .require_capability(Capability::CredentialsManagement)?;
+
         // Confirm the operation if a confirmation function is provided
         if confirm {
             if !self.confirm_operation(
@@ -228,6 +256,10 @@ where
 
     /// Open the secure channel with the card
     pub fn open_secure_channel(&mut self) -> Result<()> {
+        // Check if the card supports secure channel
+        self.capabilities
+            .require_capability(Capability::SecureChannel)?;
+
         // Check if we have pairing info
         if self.pairing_info.is_none() {
             return Err(Error::Message(
@@ -255,6 +287,10 @@ where
 
     /// Pair with the card
     pub fn pair(&mut self) -> Result<PairingInfo> {
+        // Check if the card supports secure channel
+        self.capabilities
+            .require_capability(Capability::SecureChannel)?;
+
         // Get the pairing password from the user
         let password = self.request_input("Enter pairing password");
 
@@ -296,15 +332,12 @@ where
     /// Verify the PIN to gain full access
     /// This requires a secure channel with PIN verification capability
     pub fn verify_pin(&mut self) -> Result<()> {
+        // Check if the card supports credentials management
+        self.capabilities
+            .require_capability(Capability::CredentialsManagement)?;
+
         // Get the PIN from the user
         let pin = self.request_input("Enter your PIN");
-
-        // Check if secure channel is open first
-        if !self.is_secure_channel_open() {
-            return Err(Error::Message(
-                "Secure channel must be open to verify PIN".to_string(),
-            ));
-        }
 
         // Get the transport and directly call its verify_pin method
         let transport = self.executor.transport_mut();
@@ -348,6 +381,10 @@ where
 
     /// Generate a new key in the card
     pub fn generate_key(&mut self, confirm: bool) -> Result<[u8; 32]> {
+        // Check if the card supports key management
+        self.capabilities
+            .require_capability(Capability::KeyManagement)?;
+
         // Confirm the operation if a confirmation function is provided
         if confirm {
             if !self.confirm_operation(
@@ -413,6 +450,10 @@ where
         new_value: &str,
         confirm: bool,
     ) -> Result<()> {
+        // Check if the card supports credentials management
+        self.capabilities
+            .require_capability(Capability::CredentialsManagement)?;
+
         // Create a description for the confirmation
         let description = match credential_type {
             CredentialType::Pin => "Change the PIN?",
@@ -449,6 +490,10 @@ where
 
     /// Unblock the PIN using the PUK
     pub fn unblock_pin(&mut self, puk: &str, new_pin: &str, confirm: bool) -> Result<()> {
+        // Check if the card supports credentials management
+        self.capabilities
+            .require_capability(Capability::CredentialsManagement)?;
+
         // Confirm the operation if a confirmation function is provided
         if confirm {
             if !self.confirm_operation("Unblock the PIN? This will set a new PIN using the PUK.") {
@@ -467,6 +512,10 @@ where
 
     /// Remove the current key from the card
     pub fn remove_key(&mut self, confirm: bool) -> Result<()> {
+        // Check if the card supports key management
+        self.capabilities
+            .require_capability(Capability::KeyManagement)?;
+
         // Confirm the operation if a confirmation function is provided
         if confirm {
             if !self
@@ -525,6 +574,10 @@ where
         &mut self,
         words: u8,
     ) -> Result<coins_bip39::Mnemonic<coins_bip39::English>> {
+        // Check if the card supports key management
+        self.capabilities
+            .require_capability(Capability::KeyManagement)?;
+
         // Create the generate mnemonic command
         let cmd = GenerateMnemonicCommand::with_words(words)?;
 
@@ -558,6 +611,10 @@ where
         private_key: k256::SecretKey,
         confirm: bool,
     ) -> Result<[u8; 32]> {
+        // Check if the card supports key management
+        self.capabilities
+            .require_capability(Capability::KeyManagement)?;
+
         // Confirm the operation if a confirmation function is provided
         if confirm {
             if !self.confirm_operation(
@@ -628,13 +685,12 @@ where
         Ok(key_uid)
     }
 
-    /// Delete a key path (alias for remove_key)
-    pub fn delete_key(&mut self, confirm: bool) -> Result<()> {
-        self.remove_key(confirm)
-    }
-
     /// Unpair the card from a specific pairing index
     pub fn unpair(&mut self, index: u8, confirm: bool) -> Result<()> {
+        // Check if the card supports secure channel
+        self.capabilities
+            .require_capability(Capability::SecureChannel)?;
+
         // Confirm the operation if a confirmation function is provided
         if confirm {
             if !self.confirm_operation(&format!("Unpair slot {} from the card?", index)) {
@@ -660,6 +716,12 @@ where
 
     /// Store data in the card
     pub fn store_data(&mut self, record: PersistentRecord, data: &[u8]) -> Result<()> {
+        // If the persistent record is NDEF, check if the card has this capability
+        if record == PersistentRecord::Ndef {
+            // Check if the card supports key management
+            self.capabilities.require_capability(Capability::Ndef)?;
+        }
+
         // Create the store data command
         let cmd = StoreDataCommand::put(record, data);
 
@@ -671,6 +733,12 @@ where
 
     /// Get data from the card
     pub fn get_data(&mut self, record: PersistentRecord) -> Result<Vec<u8>> {
+        // If the persistent record is NDEF, check if the card has this capability
+        if record == PersistentRecord::Ndef {
+            // Check if the card supports key management
+            self.capabilities.require_capability(Capability::Ndef)?;
+        }
+
         // Create the get data command
         let cmd = GetDataCommand::get(record);
 

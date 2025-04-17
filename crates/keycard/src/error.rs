@@ -73,6 +73,10 @@ pub enum Error {
     //
     // Keycard-specific errors
     //
+    /// Capability not supported
+    #[error("Capability not supported: {0}")]
+    CapabilityNotSupported(&'static str),
+
     /// Secure channel not supported
     #[error("Secure channel not supported")]
     SecureChannelNotSupported,

@@ -8,7 +8,6 @@ use nexum_apdu_globalplatform::commands::select::SelectCommand;
 
 use crate::commands::*;
 use crate::constants::KEYCARD_AID;
-use crate::secure_channel::KeycardSecureChannel;
 use crate::types::Signature;
 use crate::{ApplicationInfo, ApplicationStatus, Error, PairingInfo, Result};
 
@@ -585,53 +584,6 @@ where
         let GetDataOk::Success { data } = response;
         Ok(data)
     }
-}
-
-/// Create a secure channel instance with the given pairing info and callbacks
-pub fn create_keycard_secure_channel<T>(
-    transport: T,
-    pairing_info: PairingInfo,
-    card_public_key: k256::PublicKey,
-) -> Result<KeycardSecureChannel<T>>
-where
-    T: CardTransport + 'static,
-{
-    // Create a secure transport with the pairing info
-    let mut secure_transport = KeycardSecureChannel::new(transport);
-
-    // Initialize the session
-    secure_transport.initialize_session(&card_public_key, &pairing_info)?;
-
-    Ok(secure_transport)
-}
-
-/// Helper function to create a Keycard instance with a secure channel
-pub fn create_secure_keycard<T>(
-    transport: T,
-    pairing_info: PairingInfo,
-    card_public_key: k256::PublicKey,
-    pin_callback: InputRequestFn,
-    confirm_callback: ConfirmationFn,
-) -> Result<Keycard<CardExecutor<KeycardSecureChannel<T>>>>
-where
-    T: CardTransport + 'static,
-{
-    // Create the secure channel
-    let secure_transport =
-        create_keycard_secure_channel(transport, pairing_info.clone(), card_public_key)?;
-
-    // Create a card executor with the secure transport
-    let executor = CardExecutor::new(secure_transport);
-
-    // Create the keycard instance
-    Ok(Keycard::with_pairing(
-        executor,
-        pairing_info,
-        card_public_key,
-        None,
-        pin_callback,
-        confirm_callback,
-    ))
 }
 
 /// Credential type for changing credentials

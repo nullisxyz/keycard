@@ -14,7 +14,7 @@ pub use constants::*;
 pub use crypto::Challenge;
 pub use error::{CoreResultExt, Error, GpResultExt, Result, ResultExt};
 pub use secrets::Secrets;
-pub use secure_channel::KeycardSCP;
+pub use secure_channel::KeycardSecureChannel;
 pub use types::{ApplicationInfo, ApplicationStatus, Keypair, PairingInfo, PublicKey};
 
 /// Represents the version of the applet protocol

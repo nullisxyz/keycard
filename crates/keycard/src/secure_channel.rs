@@ -3,11 +3,7 @@ use std::fmt;
 use alloy_primitives::hex::encode;
 use bytes::{Bytes, BytesMut};
 use k256::elliptic_curve::generic_array::GenericArray;
-use nexum_apdu_core::error::Error;
-use nexum_apdu_core::secure_channel::{SecureChannel, SecurityLevel};
-use nexum_apdu_core::transport::CardTransport;
-use nexum_apdu_core::{ApduCommand, Executor};
-use nexum_apdu_core::{Command, Response};
+use nexum_apdu_core::prelude::*;
 use rand::{RngCore, rng};
 use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
@@ -19,13 +15,8 @@ use crate::session::Session;
 use crate::types::PairingInfo;
 use crate::{Challenge, MutuallyAuthenticateOk, PairCommand, PairOk};
 
-/// Type for function that provides a PIN
-pub type PinRequestFn = Box<dyn Fn() -> String + Send + Sync>;
-/// Type for function that confirms operations
-pub type ConfirmationFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
-
 /// Secure Channel Protocol implementation for Keycard
-pub struct KeycardSCP<T: CardTransport> {
+pub struct KeycardSecureChannel<T: CardTransport> {
     /// The underlying transport
     transport: T,
     /// Session containing keys and state (None if not established)
@@ -34,28 +25,19 @@ pub struct KeycardSCP<T: CardTransport> {
     security_level: SecurityLevel,
     /// Whether the secure channel is established
     established: bool,
-    /// Optional callback for requesting PIN
-    pin_request_callback: Option<PinRequestFn>,
-    /// Optional callback for confirming critical operations
-    confirmation_callback: Option<ConfirmationFn>,
 }
 
-impl<T: CardTransport> fmt::Debug for KeycardSCP<T> {
+impl<T: CardTransport> fmt::Debug for KeycardSecureChannel<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeycardSCP")
             .field("security_level", &self.security_level)
             .field("established", &self.established)
             .field("session_initialized", &self.session.is_some())
-            .field("has_pin_callback", &self.pin_request_callback.is_some())
-            .field(
-                "has_confirm_callback",
-                &self.confirmation_callback.is_some(),
-            )
             .finish()
     }
 }
 
-impl<T: CardTransport> KeycardSCP<T> {
+impl<T: CardTransport> KeycardSecureChannel<T> {
     /// Create a new secure channel instance with just a transport
     /// The secure channel is not established until `open()` is called
     pub fn new(transport: T) -> Self {
@@ -64,27 +46,7 @@ impl<T: CardTransport> KeycardSCP<T> {
             session: None,
             security_level: SecurityLevel::none(),
             established: false,
-            pin_request_callback: None,
-            confirmation_callback: None,
         }
-    }
-
-    /// Set the callback for requesting PIN
-    pub fn with_pin_callback<F>(mut self, callback: F) -> Self
-    where
-        F: Fn() -> String + Send + Sync + 'static,
-    {
-        self.pin_request_callback = Some(Box::new(callback));
-        self
-    }
-
-    /// Set the callback for confirming critical operations
-    pub fn with_confirmation_callback<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(&str) -> bool + Send + Sync + 'static,
-    {
-        self.confirmation_callback = Some(Box::new(callback));
-        self
     }
 
     /// Initialize the session for this secure channel using existing pairing info and public key
@@ -166,7 +128,7 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 
     /// Verify PIN using the PIN request callback if available
-    pub fn verify_pin<E>(&mut self, executor: &mut E) -> crate::Result<bool>
+    pub fn verify_pin<E>(&mut self, executor: &mut E, pin: &str) -> crate::Result<bool>
     where
         E: Executor,
     {
@@ -174,36 +136,16 @@ impl<T: CardTransport> KeycardSCP<T> {
             return Err(Error::other("Secure channel not established").into());
         }
 
-        // Check if we have a PIN callback
-        if let Some(pin_fn) = &self.pin_request_callback {
-            // Get the PIN from the callback
-            let pin = pin_fn();
+        // Create the command
+        let cmd = VerifyPinCommand::with_pin(&pin);
 
-            // Create the command
-            let cmd = VerifyPinCommand::with_pin(&pin);
+        // Execute the command
+        executor.execute(&cmd)?;
 
-            // Execute the command
-            executor.execute(&cmd)?;
+        // At this point, it's guaranteed that the PIN was verified successfully
+        self.security_level = SecurityLevel::full();
 
-            // At this point, it's guaranteed that the PIN was verified successfully
-            self.security_level = SecurityLevel::full();
-
-            Ok(true)
-        } else {
-            // No PIN callback available
-            Err(Error::other("No PIN callback configured").into())
-        }
-    }
-
-    /// Confirm a critical operation using the confirmation callback if available
-    pub fn confirm_operation(&self, operation_description: &str) -> crate::Result<bool> {
-        if let Some(confirm_fn) = &self.confirmation_callback {
-            // Ask for confirmation using the callback
-            Ok(confirm_fn(operation_description))
-        } else {
-            // No confirmation callback available, assume confirmed
-            Ok(true)
-        }
+        Ok(true)
     }
 
     /// Encrypt APDU command data for the secure channel
@@ -355,7 +297,7 @@ impl<T: CardTransport> KeycardSCP<T> {
     }
 }
 
-impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
+impl<T: CardTransport> SecureChannel for KeycardSecureChannel<T> {
     type UnderlyingTransport = T;
 
     fn transport(&self) -> &Self::UnderlyingTransport {
@@ -430,7 +372,7 @@ impl<T: CardTransport> SecureChannel for KeycardSCP<T> {
     }
 }
 
-impl<T: CardTransport> CardTransport for KeycardSCP<T> {
+impl<T: CardTransport> CardTransport for KeycardSecureChannel<T> {
     fn transmit_raw(&mut self, command: &[u8]) -> Result<Bytes, Error> {
         trace!(
             "KeycardSCP::transmit_raw called with security_level={:?}, established={}",
@@ -503,13 +445,11 @@ mod tests {
         }
 
         // Create secure channel with the session
-        let mut scp = KeycardSCP {
+        let mut scp = KeycardSecureChannel {
             transport: MockTransport,
             session: Some(session),
             security_level: SecurityLevel::enc_mac(),
             established: true,
-            confirmation_callback: None,
-            pin_request_callback: None,
         };
 
         // Create the same command as in the Go test

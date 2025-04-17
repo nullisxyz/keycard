@@ -22,12 +22,17 @@ use crate::commands::store_data::StoreDataCommand;
 use crate::commands::unpair::UnpairCommand;
 use crate::commands::{DeriveMode, KeyPath, PersistentRecord};
 use crate::constants::KEYCARD_AID;
-use crate::secure_channel::KeycardSCP;
+use crate::secure_channel::KeycardSecureChannel;
 use crate::types::Signature;
 use crate::{
     ApplicationInfo, ApplicationStatus, Error, GenerateKeyOk, GetDataOk, GetStatusOk, IdentOk,
     LoadKeyOk, PairingInfo, Result, SignOk,
 };
+
+/// Type for function that provides an input string (ie. PIN)
+pub type InputRequestFn = Box<dyn Fn(&str) -> String + Send + Sync>;
+/// Type for function that confirms operations
+pub type ConfirmationFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// Keycard application implementation
 pub struct Keycard<E: Executor> {
@@ -39,16 +44,26 @@ pub struct Keycard<E: Executor> {
     card_public_key: Option<k256::PublicKey>,
     /// Application info retrieved during selection
     application_info: Option<ApplicationInfo>,
+    /// Callback for requesting input
+    input_request_callback: InputRequestFn,
+    /// Callback for confirming critical operations
+    confirmation_callback: ConfirmationFn,
 }
 
 impl<E: Executor> Keycard<E> {
     /// Create a new Keycard instance with an executor
-    pub fn new(executor: E) -> Self {
+    pub fn new(
+        executor: E,
+        input_request_callback: InputRequestFn,
+        confirmation_callback: ConfirmationFn,
+    ) -> Self {
         Self {
             executor,
             pairing_info: None,
             card_public_key: None,
             application_info: None,
+            input_request_callback,
+            confirmation_callback,
         }
     }
 
@@ -58,13 +73,35 @@ impl<E: Executor> Keycard<E> {
         pairing_info: PairingInfo,
         card_public_key: k256::PublicKey,
         application_info: Option<ApplicationInfo>,
+        input_request_callback: InputRequestFn,
+        confirmation_callback: ConfirmationFn,
     ) -> Self {
         Self {
             executor,
             pairing_info: Some(pairing_info),
             card_public_key: Some(card_public_key),
             application_info,
+            input_request_callback,
+            confirmation_callback,
         }
+    }
+
+    /// Set the callback for requesting input
+    pub fn with_input_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&str) -> String + Send + Sync + 'static,
+    {
+        self.input_request_callback = Box::new(callback);
+        self
+    }
+
+    /// Set the callback for confirming critical operations
+    pub fn with_confirmation_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        self.confirmation_callback = Box::new(callback);
+        self
     }
 
     /// Get a reference to the executor
@@ -124,31 +161,44 @@ impl<E: Executor> Keycard<E> {
 
     /// Initialize the Keycard card (factory reset)
     /// IMPORTANT: This will erase all data on the card
-    pub fn initialize(&mut self, confirm_fn: Option<&dyn Fn(&str) -> bool>) -> Result<()> {
+    pub fn initialize(&mut self, confirm: bool) -> Result<()> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Initialize the card? This will erase all data and cannot be undone.") {
+        if confirm {
+            if !self.confirm_operation(
+                "Initialize the card? This will erase all data and cannot be undone.",
+            ) {
                 return Err(Error::UserCancelled);
             }
         }
 
         // Check if we have the card's public key
-        if let Some(card_pubkey) = &self.card_public_key {
-            // Create the initialization command
-            let cmd = InitCommand::with_card_pubkey(*card_pubkey);
+        match self.card_public_key {
+            Some(card_pubkey) => {
+                // Create the initialization command
+                let cmd = InitCommand::with_card_pubkey(card_pubkey);
 
-            // Execute the command
-            self.executor.execute(&cmd)?;
+                // Execute the command
+                self.executor.execute(&cmd)?;
 
-            // Clear out any existing pairing info since the card has been reset
-            self.pairing_info = None;
+                // Clear out any existing pairing info since the card has been reset
+                self.pairing_info = None;
 
-            Ok(())
-        } else {
-            Err(Error::InvalidData(
+                Ok(())
+            }
+            None => Err(Error::InvalidData(
                 "Card public key is required for initialization",
-            ))
+            )),
         }
+    }
+
+    /// Request input using the input request callback
+    fn request_input(&self, prompt: &str) -> String {
+        (&self.input_request_callback)(prompt)
+    }
+
+    /// Confirm a critical operation using the confirmation callback if available
+    fn confirm_operation(&self, operation_description: &str) -> bool {
+        (&self.confirmation_callback)(operation_description)
     }
 }
 
@@ -174,9 +224,12 @@ where
 
     /// Verify the PIN to gain full access
     /// This requires a secure channel with PIN verification capability
-    pub fn verify_pin(&mut self, pin: &str) -> Result<()> {
+    pub fn verify_pin(&mut self) -> Result<()> {
+        // Get the PIN from the user
+        let pin = self.request_input("Enter your PIN");
+
         // Create the command
-        let cmd = VerifyPinCommand::with_pin(pin);
+        let cmd = VerifyPinCommand::with_pin(&pin);
 
         // Execute the command with security level check
         self.executor.execute_secure(&cmd)?;
@@ -215,11 +268,12 @@ where
     }
 
     /// Generate a new key in the card
-    pub fn generate_key(&mut self, confirm_fn: Option<&dyn Fn(&str) -> bool>) -> Result<[u8; 32]> {
+    pub fn generate_key(&mut self, confirm: bool) -> Result<[u8; 32]> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Generate a new keypair on the card? This will overwrite any existing key.")
-            {
+        if confirm {
+            if !self.confirm_operation(
+                "Generate a new keypair on the card? This will overwrite any existing key.",
+            ) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -236,12 +290,7 @@ where
     }
 
     /// Sign data with the current key
-    pub fn sign(
-        &mut self,
-        data: &[u8],
-        key_path: KeyPath,
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
-    ) -> Result<Signature> {
+    pub fn sign(&mut self, data: &[u8], key_path: KeyPath, confirm: bool) -> Result<Signature> {
         // Create description for confirmation
         let path_str = match &key_path {
             KeyPath::Current => "current key".to_string(),
@@ -252,8 +301,8 @@ where
         };
 
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm(&format!("Sign data using {}?", path_str)) {
+        if confirm {
+            if !self.confirm_operation(&format!("Sign data using {}?", path_str)) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -283,7 +332,7 @@ where
         &mut self,
         credential_type: CredentialType,
         new_value: &str,
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
+        confirm: bool,
     ) -> Result<()> {
         // Create a description for the confirmation
         let description = match credential_type {
@@ -293,8 +342,8 @@ where
         };
 
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm(description) {
+        if confirm {
+            if !self.confirm_operation(description) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -320,15 +369,10 @@ where
     }
 
     /// Unblock the PIN using the PUK
-    pub fn unblock_pin(
-        &mut self,
-        puk: &str,
-        new_pin: &str,
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
-    ) -> Result<()> {
+    pub fn unblock_pin(&mut self, puk: &str, new_pin: &str, confirm: bool) -> Result<()> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Unblock the PIN? This will set a new PIN using the PUK.") {
+        if confirm {
+            if !self.confirm_operation("Unblock the PIN? This will set a new PIN using the PUK.") {
                 return Err(Error::UserCancelled);
             }
         }
@@ -343,10 +387,12 @@ where
     }
 
     /// Remove the current key from the card
-    pub fn remove_key(&mut self, confirm_fn: Option<&dyn Fn(&str) -> bool>) -> Result<()> {
+    pub fn remove_key(&mut self, confirm: bool) -> Result<()> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Remove the current key from the card? This cannot be undone.") {
+        if confirm {
+            if !self
+                .confirm_operation("Remove the current key from the card? This cannot be undone.")
+            {
                 return Err(Error::UserCancelled);
             }
         }
@@ -364,7 +410,7 @@ where
     pub fn set_pinless_path(
         &mut self,
         path: Option<&coins_bip32::path::DerivationPath>,
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
+        confirm: bool,
     ) -> Result<()> {
         // Create description for confirmation
         let description = match path {
@@ -373,8 +419,8 @@ where
         };
 
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm(&description) {
+        if confirm {
+            if !self.confirm_operation(&description) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -431,11 +477,13 @@ where
         &mut self,
         public_key: Option<k256::PublicKey>,
         private_key: k256::SecretKey,
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
+        confirm: bool,
     ) -> Result<[u8; 32]> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Load a new key into the card? This will overwrite any existing key.") {
+        if confirm {
+            if !self.confirm_operation(
+                "Load a new key into the card? This will overwrite any existing key.",
+            ) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -457,12 +505,13 @@ where
         public_key: Option<k256::PublicKey>,
         private_key: k256::SecretKey,
         chain_code: [u8; 32],
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
+        confirm: bool,
     ) -> Result<[u8; 32]> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Load an extended key into the card? This will overwrite any existing key.")
-            {
+        if confirm {
+            if !self.confirm_operation(
+                "Load an extended key into the card? This will overwrite any existing key.",
+            ) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -479,14 +528,12 @@ where
     }
 
     /// Load a BIP39 seed into the card
-    pub fn load_seed(
-        &mut self,
-        seed: &[u8; 64],
-        confirm_fn: Option<&dyn Fn(&str) -> bool>,
-    ) -> Result<[u8; 32]> {
+    pub fn load_seed(&mut self, seed: &[u8; 64], confirm: bool) -> Result<[u8; 32]> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm("Load a BIP39 seed into the card? This will overwrite any existing key.") {
+        if confirm {
+            if !self.confirm_operation(
+                "Load a BIP39 seed into the card? This will overwrite any existing key.",
+            ) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -503,15 +550,15 @@ where
     }
 
     /// Delete a key path (alias for remove_key)
-    pub fn delete_key(&mut self, confirm_fn: Option<&dyn Fn(&str) -> bool>) -> Result<()> {
-        self.remove_key(confirm_fn)
+    pub fn delete_key(&mut self, confirm: bool) -> Result<()> {
+        self.remove_key(confirm)
     }
 
     /// Unpair the card from a specific pairing index
-    pub fn unpair(&mut self, index: u8, confirm_fn: Option<&dyn Fn(&str) -> bool>) -> Result<()> {
+    pub fn unpair(&mut self, index: u8, confirm: bool) -> Result<()> {
         // Confirm the operation if a confirmation function is provided
-        if let Some(confirm) = confirm_fn {
-            if !confirm(&format!("Unpair slot {} from the card?", index)) {
+        if confirm {
+            if !self.confirm_operation(&format!("Unpair slot {} from the card?", index)) {
                 return Err(Error::UserCancelled);
             }
         }
@@ -562,23 +609,12 @@ pub fn create_keycard_secure_channel<T>(
     transport: T,
     pairing_info: PairingInfo,
     card_public_key: k256::PublicKey,
-    pin_callback: Option<impl Fn() -> String + Send + Sync + 'static>,
-    confirm_callback: Option<impl Fn(&str) -> bool + Send + Sync + 'static>,
-) -> Result<KeycardSCP<T>>
+) -> Result<KeycardSecureChannel<T>>
 where
     T: CardTransport + 'static,
 {
     // Create a secure transport with the pairing info
-    let mut secure_transport = KeycardSCP::new(transport);
-
-    // Add callbacks if provided
-    if let Some(pin_fn) = pin_callback {
-        secure_transport = secure_transport.with_pin_callback(pin_fn);
-    }
-
-    if let Some(confirm_fn) = confirm_callback {
-        secure_transport = secure_transport.with_confirmation_callback(confirm_fn);
-    }
+    let mut secure_transport = KeycardSecureChannel::new(transport);
 
     // Initialize the session
     secure_transport.initialize_session(&card_public_key, &pairing_info)?;
@@ -591,20 +627,15 @@ pub fn create_secure_keycard<T>(
     transport: T,
     pairing_info: PairingInfo,
     card_public_key: k256::PublicKey,
-    pin_callback: Option<impl Fn() -> String + Send + Sync + 'static>,
-    confirm_callback: Option<impl Fn(&str) -> bool + Send + Sync + 'static>,
-) -> Result<Keycard<CardExecutor<KeycardSCP<T>>>>
+    pin_callback: InputRequestFn,
+    confirm_callback: ConfirmationFn,
+) -> Result<Keycard<CardExecutor<KeycardSecureChannel<T>>>>
 where
     T: CardTransport + 'static,
 {
     // Create the secure channel
-    let secure_transport = create_keycard_secure_channel(
-        transport,
-        pairing_info.clone(),
-        card_public_key,
-        pin_callback,
-        confirm_callback,
-    )?;
+    let secure_transport =
+        create_keycard_secure_channel(transport, pairing_info.clone(), card_public_key)?;
 
     // Create a card executor with the secure transport
     let executor = CardExecutor::new(secure_transport);
@@ -615,6 +646,8 @@ where
         pairing_info,
         card_public_key,
         None,
+        pin_callback,
+        confirm_callback,
     ))
 }
 

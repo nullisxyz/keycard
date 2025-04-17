@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use alloy_consensus::SignableTransaction;
 use alloy_network::{AnyNetwork, EthereumWallet, IntoWallet};
-use alloy_primitives::{address, Address, ChainId, Signature, B256};
-use alloy_signer::{sign_transaction_with_chain_id, Result, Signer};
+use alloy_primitives::{Address, B256, ChainId, Signature, address};
+use alloy_signer::{Result, Signer, sign_transaction_with_chain_id};
 use async_trait::async_trait;
 use nexum_apdu_core::prelude::*;
-use nexum_keycard::{KeyPath, Keycard, KeycardSCP};
+use nexum_keycard::{KeyPath, Keycard, KeycardSecureChannel};
 use tokio::sync::Mutex;
 
 // Temporary remove Debug derive since Keycard doesn't implement Debug
@@ -14,7 +14,7 @@ pub struct KeycardSigner<T>
 where
     T: CardTransport,
 {
-    inner: Arc<Mutex<Keycard<CardExecutor<KeycardSCP<T>>>>>,
+    inner: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>,
     pub(crate) chain_id: Option<ChainId>,
     pub(crate) address: Address,
 }
@@ -35,7 +35,7 @@ impl<T> KeycardSigner<T>
 where
     T: CardTransport,
 {
-    pub fn new(keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSCP<T>>>>>) -> Self {
+    pub fn new(keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>) -> Self {
         let address = address!("0xf888b1c80d40c08e53e4f3446ae2dac72fe0f31c");
         Self {
             inner: keycard,
@@ -54,26 +54,16 @@ where
     async fn sign_hash(&self, data: &B256) -> Result<Signature> {
         // Convert the B256 to a byte slice for KeyCard's sign method
         let data_bytes: &[u8] = data.as_slice();
-        
+
         // Get the keycard signature
-        let keycard_signature = self.inner
+        let signature = self
+            .inner
             .lock()
             .await
-            .sign(data_bytes, KeyPath::Current, None)
+            .sign(data_bytes, KeyPath::Current, false)
             .map_err(|e| alloy_signer::Error::Other(Box::new(e)))?;
-            
-        // Convert nexum_keycard::Signature to alloy_primitives::Signature
-        // Extract the r, s, v components
-        let r_bytes = keycard_signature.r();
-        let s_bytes = keycard_signature.s();
-        let v = keycard_signature.recid().recovery_byte();
-        
-        // Create an alloy_primitives::Signature from r, s, v
-        let r = B256::from_slice(r_bytes);
-        let s = B256::from_slice(s_bytes);
-        
-        // Create the signature with the components
-        Ok(Signature::from_bytes_with_v(&[r.0, s.0, [v]].concat()).unwrap())
+
+        Ok(signature)
     }
 
     #[inline]

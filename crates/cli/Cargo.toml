@@ -21,7 +21,7 @@ nexum-keycard-signer.workspace = true
 clap = { workspace = true, features = ["derive"] }
 
 ## blockchain
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["hex-compat"] }
 alloy-network.workspace = true
 alloy-signer.workspace = true
 alloy-consensus.workspace = true
@@ -32,3 +32,4 @@ iso7816-tlv.workspace = true
 tracing-subscriber.workspace = true
 coins-bip32.workspace = true
 tokio = { workspace = true, features = ["full"] }
+rand = { workspace = true }

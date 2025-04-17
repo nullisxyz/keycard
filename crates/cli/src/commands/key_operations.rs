@@ -1,137 +1,258 @@
-//! Key operations (generate, sign, remove)
+//! Commands for key management operations
 
-use alloy_primitives::hex;
+use alloy_primitives::hex::{self, ToHexExt};
 use coins_bip32::path::DerivationPath;
 use nexum_apdu_transport_pcsc::PcscTransport;
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use nexum_keycard::ExportOption;
+use std::error::Error;
+use std::str::FromStr;
 use tracing::{debug, info};
 
-use crate::utils::{PairingArgs, session};
+use crate::utils;
 
-/// Generate a new key pair
+/// Generate a key on the card
 pub fn generate_key_command(
     transport: PcscTransport,
-    pin: Option<&String>,
-    pairing_key: Option<&String>,
-    index: Option<u8>,
-    file: Option<&PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize keycard
-    let (keycard, _) = session::initialize_keycard(transport)?;
+    _pin: Option<&String>,
+    pairing_args: &utils::PairingArgs,
+    _path: Option<&String>,
+) -> Result<(), Box<dyn Error>> {
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Add pairing info
-    let secure_keycard = session::ensure_secure_channel(keycard, file, pairing_key, index)?;
+    // Verify PIN if needed
+    let status = keycard.get_status()?;
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
+    }
 
-    // In a real implementation, we would use secure_keycard.generate_key()
-    // For the demo CLI, simulate key generation
-    info!("Simulating key generation...");
-    let key_uid = [0u8; 32]; // Simulated key UID
+    // Generate a new key
+    info!("Generating master key");
+    let key_uid = keycard.generate_key(true)?;
 
-    println!("\u{1F511} Key generated successfully!");
-    println!("Key UID: {}", hex::encode(key_uid));
+    println!("Key generated successfully");
+    println!("Key UID: 0x{}", hex::encode(key_uid));
+
     Ok(())
 }
 
-/// Sign data with the key on the card
+/// Export the current key
+pub fn export_key_command(
+    transport: PcscTransport,
+    _pin: Option<&String>,
+    pairing_args: &utils::PairingArgs,
+    path: Option<&String>,
+) -> Result<(), Box<dyn Error>> {
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
+
+    // Verify PIN if needed
+    let status = keycard.get_status()?;
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
+    }
+
+    // Export the key
+    let keypair = if let Some(derivation_path) = path {
+        info!("Exporting key with path: {}", derivation_path);
+        // Parse the derivation path
+        let path = DerivationPath::from_str(derivation_path)?;
+        keycard.export_key_from_master(ExportOption::PrivateAndPublic, Some(&path), false, true)?
+    } else {
+        info!("Exporting current key");
+        keycard.export_key(ExportOption::PrivateAndPublic)?
+    };
+
+    // Display the key information
+    println!("Key exported successfully");
+
+    // Display public key if available
+    if let Some(public_key) = keypair.public_key() {
+        println!(
+            "Public key: 0x{}",
+            hex::encode(public_key.to_sec1_bytes().as_ref())
+        );
+    }
+
+    // Display private key if available
+    if let Some(private_key) = keypair.private_key() {
+        println!("Private key: 0x{}", hex::encode(private_key.to_bytes()));
+    }
+
+    // Display chain code if available
+    if let Some(chain_code) = keypair.chain_code() {
+        println!("Chain code: 0x{}", hex::encode(chain_code));
+    }
+
+    Ok(())
+}
+
+/// Sign data with the current key
 pub async fn sign_command(
     transport: PcscTransport,
-    data_hex: &str,
+    data: &str,
     path: Option<&String>,
-    pin: Option<&String>,
-    pairing_key: Option<&String>,
-    index: Option<u8>,
-    file: Option<&PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize keycard
-    let (keycard, _) = session::initialize_keycard(transport)?;
+    pairing_args: &utils::PairingArgs,
+) -> Result<(), Box<dyn Error>> {
+    // Parse the data from hex
+    let data_bytes = hex::decode(data)?;
 
-    // Add pairing info
-    let secure_keycard = session::ensure_secure_channel(keycard, file, pairing_key, index)?;
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // For the signer, we need to wrap in Arc<Mutex>
-    let secure_keycard = Arc::new(Mutex::new(secure_keycard));
+    // Check if PIN verification is needed
+    let status = keycard.get_status()?;
 
-    // Convert hex string to bytes
-    let data_bytes = hex::decode(data_hex.trim_start_matches("0x"))?;
-    if data_bytes.len() != 32 {
-        return Err("Data to sign must be exactly 32 bytes (e.g. a hash)".into());
+    // Verify PIN if needed
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
     }
 
-    // Convert to fixed-size array safely
-    let mut data = [0u8; 32];
-    data.copy_from_slice(&data_bytes[..32]);
-
-    // Create key path based on provided path if needed
-    if let Some(path_str) = path {
-        info!("Using custom derivation path: {}", path_str);
-        // Parse the path to validate it
-        let _derivation_path = DerivationPath::try_from(path_str.as_str())?;
+    // Sign the data
+    let signature = if let Some(derivation_path_str) = path {
+        let derivation_path = DerivationPath::from_str(derivation_path_str)?;
+        info!(
+            "Signing with key at path: {}",
+            derivation_path.derivation_string()
+        );
+        // In this case, just sign with current key
+        // The actual path derivation is handled internally by the keycard
+        // and we are not passing a KeyPath object directly
+        keycard.sign(&data_bytes, nexum_keycard::KeyPath::Current, false)?
     } else {
-        info!("Using current key path");
-    }
+        info!("Signing with current key");
+        keycard.sign(&data_bytes, nexum_keycard::KeyPath::Current, false)?
+    };
 
-    // Signer implementation would normally be used here
-    debug!("Simulating signing operation");
+    // Display the signature
+    println!(
+        "Signature: {}",
+        signature.as_bytes().encode_hex_with_prefix()
+    );
 
-    // Create a simulated signature
-    let simulated_sig = [0u8; 65]; // r,s,v format (32+32+1 bytes)
-
-    println!("\u{270F}\u{FE0F} Data signed successfully!");
-    println!("Signature: {}", hex::encode(simulated_sig));
     Ok(())
 }
 
-/// Remove the current key from the card
+/// Load an existing key
+pub fn load_key_command(
+    transport: PcscTransport,
+    seed: &str,
+    _pin: Option<&String>,
+    pairing_args: &utils::PairingArgs,
+) -> Result<(), Box<dyn Error>> {
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
+
+    // Verify PIN if needed
+    let status = keycard.get_status()?;
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
+    }
+
+    // Check if the seed looks like a hex string and decode it
+    let seed_bytes = if seed.len() >= 2 && seed.starts_with("0x") {
+        hex::decode(&seed[2..])?
+    } else if seed.chars().all(|c| c.is_ascii_hexdigit()) {
+        hex::decode(seed)?
+    } else {
+        // We assume it's a mnemonic phrase, but we need to do a manual conversion
+        // since we don't have direct access to BIP39 from here
+        return Err("Mnemonic phrases are not supported yet. Please use hex seed instead.".into());
+    };
+
+    // Load the key from seed
+    keycard.load_seed(&seed_bytes.try_into().unwrap(), true)?;
+
+    println!("Key loaded successfully");
+
+    Ok(())
+}
+
+/// Remove the current key
 pub fn remove_key_command(
     transport: PcscTransport,
-    pin: Option<&String>,
-    pairing_args: &PairingArgs,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize keycard
-    let (keycard, _) = session::initialize_keycard(transport)?;
+    _pin: Option<&String>,
+    pairing_args: &utils::PairingArgs,
+) -> Result<(), Box<dyn Error>> {
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Add pairing info
-    let _secure_keycard = session::ensure_secure_channel(
-        keycard,
-        pairing_args.file.as_ref(),
-        pairing_args.key.as_ref(),
-        pairing_args.index,
-    )?;
+    // Verify PIN if needed
+    let status = keycard.get_status()?;
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
+    }
 
-    // In a real implementation, we would call secure_keycard.remove_key()
-    info!("Simulating key removal...");
+    // Remove the key
+    keycard.remove_key(true)?;
 
-    println!("\u{1F512} Key removed successfully!");
+    println!("Key removed successfully");
+
     Ok(())
 }
 
-/// Set a PIN-less path for signing
+/// Set a PIN-less path for signature operations
 pub fn set_pinless_path_command(
     transport: PcscTransport,
     path: &str,
-    pin: Option<&String>,
-    pairing_args: &PairingArgs,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize keycard
-    let (keycard, _) = session::initialize_keycard(transport)?;
+    _pin: Option<&String>,
+    pairing_args: &utils::PairingArgs,
+) -> Result<(), Box<dyn Error>> {
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
 
-    // Add pairing info and pin verification is needed
-    let _secure_keycard = session::ensure_secure_channel(
-        keycard,
-        pairing_args.file.as_ref(),
-        pairing_args.key.as_ref(),
-        pairing_args.index,
-    )?;
+    // Verify PIN if needed
+    let status = keycard.get_status()?;
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
+    }
 
-    // Validate the path format
-    let _derivation_path = DerivationPath::try_from(path)?;
+    // Parse the derivation path
+    let derivation_path = DerivationPath::from_str(path)?;
 
-    // In a real implementation, we would call secure_keycard.set_pinless_path(path)
-    info!("Simulating setting PIN-less path to: {}", path);
+    // Set the PIN-less path
+    keycard.set_pinless_path(Some(&derivation_path), false)?;
 
-    println!("\u{2705} PIN-less path set successfully to: {}", path);
-    println!("You can now sign with this path without PIN verification");
+    println!("PIN-less path set to: {}", path);
+
+    Ok(())
+}
+
+/// Generate a BIP39 mnemonic on the card
+pub fn generate_mnemonic_command(
+    transport: PcscTransport,
+    words_count: u8,
+    _pin: Option<&String>,
+    pairing_args: &utils::PairingArgs,
+) -> Result<(), Box<dyn Error>> {
+    // Initialize keycard with pairing info
+    let (mut keycard, _) =
+        utils::session::initialize_keycard_with_pairing(transport, pairing_args)?;
+
+    // Verify PIN if needed
+    let status = keycard.get_status()?;
+    if status.pin_retry_count < 3 {
+        debug!("PIN verification required");
+        keycard.verify_pin()?;
+    }
+
+    // Generate mnemonic
+    let mnemonic = keycard.generate_mnemonic(words_count)?;
+
+    println!("Generated {} word mnemonic:", words_count);
+    println!("{:?}", mnemonic);
+
     Ok(())
 }

@@ -1,17 +1,19 @@
 use clap::Subcommand;
+use nexum_apdu_transport_pcsc::PcscDeviceManager;
+use std::error::Error;
+use std::path::PathBuf;
 
-mod card_init;
+// Re-export command handlers
+mod card_operations;
 mod credentials;
+mod data_management;
 mod key_operations;
-mod pairing;
-mod status;
 
 // Re-export all command handlers
-pub use card_init::*;
+pub use card_operations::*;
 pub use credentials::*;
+pub use data_management::*;
 pub use key_operations::*;
-pub use pairing::*;
-pub use status::*;
 
 /// Define subcommands for the CLI
 #[derive(Subcommand)]
@@ -22,7 +24,7 @@ pub enum Commands {
     /// Select the Keycard application and show info
     Select,
 
-    /// Initialize a Keycard with random secrets
+    /// Initialize a new card with random secrets
     Init {
         /// Optional PIN (6 digits, default is random)
         #[arg(long)]
@@ -35,6 +37,10 @@ pub enum Commands {
         /// Optional pairing password (default is random)
         #[arg(long)]
         pairing_password: Option<String>,
+
+        /// Optional output file to save pairing info
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Pair with a Keycard
@@ -45,41 +51,7 @@ pub enum Commands {
 
         /// Optional output file to save pairing info
         #[arg(short, long)]
-        output: Option<std::path::PathBuf>,
-    },
-
-    /// Open a secure channel
-    OpenSecureChannel {
-        /// Path to file containing pairing data
-        #[arg(long, group = "pairing")]
-        file: Option<std::path::PathBuf>,
-
-        /// Pairing key in hex (must be used with --index)
-        #[arg(long, requires = "index", group = "pairing")]
-        key: Option<String>,
-
-        /// Pairing index (must be used with --key)
-        #[arg(long, requires = "key")]
-        index: Option<u8>,
-    },
-
-    /// Verify PIN
-    VerifyPin {
-        /// PIN code
-        #[arg(required = true)]
-        pin: String,
-
-        /// Pairing key in hex (needed if secure channel not already open)
-        #[arg(long, requires = "index", group = "pairing")]
-        pairing_key: Option<String>,
-
-        /// Pairing index (needed if secure channel not already open)
-        #[arg(long, requires = "pairing_key")]
-        index: Option<u8>,
-
-        /// Path to file containing pairing data
-        #[arg(long, group = "pairing")]
-        file: Option<std::path::PathBuf>,
+        output: Option<PathBuf>,
     },
 
     /// Generate a new key pair on the card
@@ -88,66 +60,54 @@ pub enum Commands {
         #[arg(long)]
         pin: Option<String>,
 
-        /// Pairing key in hex (needed if secure channel not already open)
-        #[arg(long, requires = "index", group = "pairing")]
-        pairing_key: Option<String>,
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
 
-        /// Pairing index (needed if secure channel not already open)
-        #[arg(long, requires = "pairing_key")]
-        index: Option<u8>,
-
-        /// Path to file containing pairing data
-        #[arg(long, group = "pairing")]
-        file: Option<std::path::PathBuf>,
-    },
-
-    /// Sign data with the current key
-    Sign {
-        /// Data to sign, as a hex string
-        #[arg(required = true)]
-        data: String,
-
-        /// Optional key derivation path
+        /// Optional derivation path (e.g. m/44'/60'/0'/0/0)
         #[arg(long)]
         path: Option<String>,
+    },
 
+    /// Export the current key from the card
+    ExportKey {
         /// PIN code (needed if not already verified)
         #[arg(long)]
         pin: Option<String>,
 
-        /// Pairing key in hex (needed if secure channel not already open)
-        #[arg(long, requires = "index", group = "pairing")]
-        pairing_key: Option<String>,
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
 
-        /// Pairing index (needed if secure channel not already open)
-        #[arg(long, requires = "pairing_key")]
-        index: Option<u8>,
-
-        /// Path to file containing pairing data
-        #[arg(long, group = "pairing")]
-        file: Option<std::path::PathBuf>,
+        /// Optional derivation path (e.g. m/44'/60'/0'/0/0)
+        #[arg(long)]
+        path: Option<String>,
     },
 
-    /// Export pairing info to a file
-    ExportPairing {
-        /// Output file path
-        #[arg(short, long, required = true)]
-        output: std::path::PathBuf,
+    /// Sign data with the current key
+    Sign {
+        /// Data to sign (hex format)
+        #[arg(required = true)]
+        data: String,
+
+        /// Optional derivation path (e.g. m/44'/60'/0'/0/0)
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
     },
 
     /// Change PIN, PUK, or pairing secret
-    ChangeCredentials {
+    ChangeCredential {
         /// Type of credential to change: 'pin', 'puk', or 'pairing'
-        #[arg(short, long, required = true)]
+        #[arg(long, value_parser = ["pin", "puk", "pairing"])]
         credential_type: String,
 
         /// New value for the credential
-        #[arg(short, long, required = true)]
+        #[arg(long, required = true)]
         new_value: String,
-
-        /// Current PIN (required for authentication)
-        #[arg(long)]
-        pin: Option<String>,
 
         /// Pairing info for secure channel
         #[command(flatten)]
@@ -160,7 +120,7 @@ pub enum Commands {
         #[arg(required = true)]
         puk: String,
 
-        /// New PIN code
+        /// New PIN to set
         #[arg(required = true)]
         new_pin: String,
 
@@ -171,13 +131,54 @@ pub enum Commands {
 
     /// Set a PIN-less path for signature operations
     SetPinlessPath {
-        /// Derivation path (e.g. m/44'/0'/0'/0/0)
+        /// Derivation path (e.g. m/44'/60'/0'/0/0)
         #[arg(required = true)]
         path: String,
 
         /// PIN code (needed if not already verified)
         #[arg(long)]
         pin: Option<String>,
+
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
+    },
+
+    /// Load an existing key onto the card
+    LoadKey {
+        /// BIP39 seed or private key in hex format
+        #[arg(required = true)]
+        seed: String,
+
+        /// PIN code (needed if not already verified)
+        #[arg(long)]
+        pin: Option<String>,
+
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
+    },
+
+    /// Store arbitrary data on the card
+    StoreData {
+        /// Type tag for the data (0-255)
+        #[arg(long, default_value = "0")]
+        type_tag: u8,
+
+        /// Data to store
+        #[arg(required = true)]
+        data: String,
+
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
+    },
+
+    /// Retrieve data from the card
+    GetData {
+        /// Type tag of the data to retrieve (0-255)
+        #[arg(long, default_value = "0")]
+        type_tag: u8,
 
         /// Pairing info for secure channel
         #[command(flatten)]
@@ -196,5 +197,43 @@ pub enum Commands {
     },
 
     /// Get detailed status information
-    GetStatus,
+    GetStatus {
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
+    },
+
+    /// Unpair from the card
+    Unpair {
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
+    },
+
+    /// Generate a BIP39 mnemonic phrase on the card
+    GenerateMnemonic {
+        /// Number of words (12, 18, or 24)
+        #[arg(long, default_value = "24", value_parser = clap::builder::ValueParser::new(|s: &str| -> Result<u8, String> {
+            let val = s.parse::<u8>().map_err(|_| "Not a valid number".to_string())?;
+            if val == 12 || val == 18 || val == 24 {
+                Ok(val)
+            } else {
+                Err("Number of words must be 12, 18, or 24".to_string())
+            }
+        }))]
+        words_count: u8,
+
+        /// PIN code (needed if not already verified)
+        #[arg(long)]
+        pin: Option<String>,
+
+        /// Pairing info for secure channel
+        #[command(flatten)]
+        pairing: crate::utils::PairingArgs,
+    },
+}
+
+/// List all available readers
+pub fn list_readers(manager: &PcscDeviceManager) -> Result<(), Box<dyn Error>> {
+    crate::utils::reader::list_readers(manager)
 }

@@ -81,7 +81,8 @@ impl Session {
         let OpenSecureChannelOk::Success { challenge, iv } = response;
 
         // Derive the session keys
-        let (enc_key, mac_key) = derive_session_keys(shared_secret, &pairing_info.key, &challenge);
+        let (enc_key, mac_key) =
+            derive_session_keys(shared_secret, &pairing_info.key.into(), &challenge);
 
         Ok(Self {
             keys: Keys::new(enc_key, mac_key),

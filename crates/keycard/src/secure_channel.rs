@@ -149,7 +149,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
                         debug!("Pairing successful with index {}", pairing_index);
 
                         Ok(PairingInfo {
-                            key,
+                            key: key.into(),
                             index: pairing_index,
                         })
                     }

@@ -8,7 +8,7 @@ mod secure_channel;
 mod session;
 mod types;
 
-pub use application::Keycard;
+pub use application::{CredentialType, Keycard};
 pub use commands::*;
 pub use constants::*;
 pub use crypto::Challenge;

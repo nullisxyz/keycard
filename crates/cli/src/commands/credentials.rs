@@ -77,7 +77,7 @@ pub fn unblock_pin_command(
 
 /// Validate PIN format
 fn validate_pin(pin: &str) -> Result<(), Box<dyn Error>> {
-    if pin.len() != 6 || !pin.chars().all(|c| c.is_digit(10)) {
+    if pin.len() != 6 || !pin.chars().all(|c| c.is_ascii_digit()) {
         return Err("PIN must be 6 digits".into());
     }
     Ok(())
@@ -85,7 +85,7 @@ fn validate_pin(pin: &str) -> Result<(), Box<dyn Error>> {
 
 /// Validate PUK format
 fn validate_puk(puk: &str) -> Result<(), Box<dyn Error>> {
-    if puk.len() != 12 || !puk.chars().all(|c| c.is_digit(10)) {
+    if puk.len() != 12 || !puk.chars().all(|c| c.is_ascii_digit()) {
         return Err("PUK must be 12 digits".into());
     }
     Ok(())

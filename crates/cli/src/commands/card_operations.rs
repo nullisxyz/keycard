@@ -17,7 +17,7 @@ pub fn select_command(transport: PcscTransport) -> Result<(), Box<dyn Error>> {
     println!("Card Info:");
     println!(
         "  Instance: {}",
-        alloy_primitives::hex::encode(&app_info.instance_uid)
+        alloy_primitives::hex::encode(app_info.instance_uid)
     );
     println!("  Version: {}", app_info.version);
     println!("  Free slots: {}", app_info.remaining_slots);
@@ -39,11 +39,11 @@ pub fn init_command(
 
     // Create secrets based on provided values or generate them
     let secrets = if pin.is_some() || puk.is_some() || pairing_password.is_some() {
-        let pin = pin.clone().unwrap_or_else(|| utils::generate_random_pin());
-        let puk = puk.clone().unwrap_or_else(|| utils::generate_random_puk());
+        let pin = pin.clone().unwrap_or_else(utils::generate_random_pin);
+        let puk = puk.clone().unwrap_or_else(utils::generate_random_puk);
         let pairing_password = pairing_password
             .clone()
-            .unwrap_or_else(|| utils::generate_random_pairing_password());
+            .unwrap_or_else(utils::generate_random_pairing_password);
 
         debug!("Using provided secrets");
         Secrets::new(&pin, &puk, &pairing_password)
@@ -140,7 +140,7 @@ pub fn get_status_command(
         println!("Card Info:");
         println!(
             "  Instance: {}",
-            alloy_primitives::hex::encode(&info.instance_uid)
+            alloy_primitives::hex::encode(info.instance_uid)
         );
         println!("  Version: {}", info.version);
         println!("  Free slots: {}", info.remaining_slots);

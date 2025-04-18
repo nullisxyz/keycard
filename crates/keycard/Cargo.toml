@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true
-description = "Rust implementation for interacting with Status Keycards for secure key management"
+description = "Rust implementation for interacting with Keycards for secure key management"
 
 [dependencies]
 ## nexum-apdu

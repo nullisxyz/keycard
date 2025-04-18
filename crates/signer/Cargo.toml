@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true
-description = "Ethereum transaction signer implementation for Status Keycards"
+description = "Ethereum transaction signer implementation for Keycards"
 
 [dependencies]
 ## blockchain

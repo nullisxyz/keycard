@@ -191,7 +191,7 @@ impl<T: CardTransport> KeycardSecureChannel<T> {
         let card_key = match card_public_key {
             Some(key) => {
                 // If a key is provided, store it for future use
-                self.card_public_key = Some(key.clone());
+                self.card_public_key = Some(*key);
                 key
             }
             None => {

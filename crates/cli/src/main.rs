@@ -116,14 +116,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     pairing,
                 } => commands::store_data_command(
                     transport,
-                    record_type.to_record_type(),
+                    *record_type,
                     data.as_bytes(),
                     pairing,
                 )?,
                 Commands::GetData {
                     record_type,
                     pairing,
-                } => commands::get_data_command(transport, record_type.to_record_type(), pairing)?,
+                } => commands::get_data_command(transport, *record_type, pairing)?,
             }
         }
     }

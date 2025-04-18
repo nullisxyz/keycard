@@ -144,20 +144,20 @@ pub enum Commands {
         #[arg(required = true)]
         data: String,
 
+        /// Record type to use
+        #[arg(long = "record-type", value_enum, default_value_t = nexum_keycard::PersistentRecord::Public)]
+        record_type: nexum_keycard::PersistentRecord,
+
         /// Pairing info for secure channel
         #[command(flatten)]
         pairing: crate::utils::PairingArgs,
-
-        /// Record type selection arguments
-        #[command(flatten, next_help_heading = "Record type")]
-        record_type: crate::utils::record_type::RecordTypeArgs,
     },
 
     /// Retrieve data from the card
     GetData {
-        /// Record type selection arguments
-        #[command(flatten, next_help_heading = "Record type")]
-        record_type: crate::utils::record_type::RecordTypeArgs,
+        /// Record type to retrieve
+        #[arg(long = "record-type", value_enum, default_value_t = nexum_keycard::PersistentRecord::Public)]
+        record_type: nexum_keycard::PersistentRecord,
 
         /// Pairing info for secure channel
         #[command(flatten)]

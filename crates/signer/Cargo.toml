@@ -1,20 +1,20 @@
 [package]
 name = "nexum-keycard-signer"
-version = { workspace = true }
-edition = { workspace = true }
-rust-version = { workspace = true }
-authors = { workspace = true }
-license = { workspace = true }
-repository = { workspace = true }
-keywords = { workspace = true }
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
 description = "Ethereum transaction signer implementation for Status Keycards"
 
 [dependencies]
 ## blockchain
-alloy-primitives = { workspace = true }
-alloy-network = { workspace = true }
-alloy-signer = { workspace = true }
-alloy-consensus = { workspace = true }
+alloy-primitives.workspace = true
+alloy-network.workspace = true
+alloy-signer.workspace = true
+alloy-consensus.workspace = true
 
 ## crypto
 k256.workspace = true

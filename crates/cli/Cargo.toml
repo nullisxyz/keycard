@@ -1,12 +1,12 @@
 [package]
 name = "nexum-keycard-cli"
-version = { workspace = true }
-edition = { workspace = true }
-rust-version = { workspace = true }
-authors = { workspace = true }
-license = { workspace = true }
-repository = { workspace = true }
-keywords = { workspace = true }
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
 description = "Command-line interface for managing Status Keycards"
 
 [dependencies]
@@ -22,7 +22,7 @@ nexum-keycard-signer.workspace = true
 
 ## ui
 clap = { workspace = true, features = ["derive"] }
-colored = "2.0"
+colored.workspace = true
 
 ## blockchain
 alloy-primitives = { workspace = true, features = ["hex-compat"] }

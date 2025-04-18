@@ -11,6 +11,7 @@ repository.workspace = true
 nexum-apdu-core.workspace = true
 nexum-apdu-globalplatform.workspace = true
 nexum-apdu-macros.workspace = true
+nexum-apdu-transport-pcsc.workspace = true
 
 ## crypto
 alloy-primitives = { workspace = true, features = ["k256"] }

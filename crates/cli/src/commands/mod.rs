@@ -140,10 +140,6 @@ pub enum Commands {
 
     /// Store arbitrary data on the card
     StoreData {
-        /// Type tag for the data (0-255)
-        #[arg(long, default_value = "0")]
-        type_tag: u8,
-
         /// Data to store
         #[arg(required = true)]
         data: String,
@@ -151,13 +147,17 @@ pub enum Commands {
         /// Pairing info for secure channel
         #[command(flatten)]
         pairing: crate::utils::PairingArgs,
+
+        /// Record type selection arguments
+        #[command(flatten, next_help_heading = "Record type")]
+        record_type: crate::utils::record_type::RecordTypeArgs,
     },
 
     /// Retrieve data from the card
     GetData {
-        /// Type tag of the data to retrieve (0-255)
-        #[arg(long, default_value = "0")]
-        type_tag: u8,
+        /// Record type selection arguments
+        #[command(flatten, next_help_heading = "Record type")]
+        record_type: crate::utils::record_type::RecordTypeArgs,
 
         /// Pairing info for secure channel
         #[command(flatten)]

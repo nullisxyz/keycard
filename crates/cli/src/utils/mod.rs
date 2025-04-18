@@ -1,6 +1,7 @@
 //! Utility functions and types for the Keycard CLI
 
 pub mod reader;
+pub mod record_type;
 pub mod session;
 
 use alloy_primitives::hex;

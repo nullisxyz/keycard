@@ -16,11 +16,6 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_ansi(true)
-        .init();
-
     // Establish transport to the Keycard
     let device_manager = PcscDeviceManager::new()?;
     let readers = device_manager.list_readers()?;

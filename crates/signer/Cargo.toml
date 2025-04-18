@@ -36,4 +36,3 @@ tokio = { workspace = true, features = ["sync"] }
 [dev-dependencies]
 alloy = "0.14"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-tracing-subscriber.workspace = true

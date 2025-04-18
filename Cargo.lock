@@ -2586,7 +2586,6 @@ dependencies = [
  "parking_lot",
  "rand 0.9.0",
  "tokio",
- "tracing-subscriber",
 ]
 
 [[package]]

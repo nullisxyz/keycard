@@ -42,17 +42,38 @@ where
         keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>,
         path: DerivationPath,
     ) -> Result<Self> {
+        let address = KeycardSigner::address_helper(keycard.clone(), &path).await?;
+
+        Ok(Self {
+            inner: keycard,
+            chain_id: None,
+            address,
+            derivation_path: path,
+        })
+    }
+
+    pub async fn set_derivation_path(&mut self, path: DerivationPath) -> Result<()> {
+        self.address = KeycardSigner::address_helper(self.inner.clone(), &path).await?;
+        self.derivation_path = path;
+
+        Ok(())
+    }
+
+    async fn address_helper(
+        keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>,
+        path: &DerivationPath,
+    ) -> Result<Address> {
         let address = keycard
             .lock()
             .await
             .export_key(ExportOption::PublicKeyOnly, &path)
             .map_err(|e| alloy_signer::Error::Other(Box::new(e)))?;
-        Ok(Self {
-            inner: keycard,
-            chain_id: None,
-            address: Address::from_public_key(&address.public_key().unwrap().into()),
-            derivation_path: path,
-        })
+        Ok(Address::from_public_key(
+            &address
+                .public_key()
+                .ok_or(alloy_signer::Error::message("Unable to parse public key"))?
+                .into(),
+        ))
     }
 }
 

@@ -176,7 +176,7 @@ where
 
     // If we get here, the user failed all attempts, return a default value
     warn!("Maximum PIN entry attempts reached, using default value");
-    "123456".to_string() // Default value as fallback
+    panic!("Maximum attempts reached for requesting valid input");
 }
 
 /// Attempts to get a valid pairing key from the user using the provided input function
@@ -217,7 +217,7 @@ where
 
     // If we get here, the user failed all attempts, return a default value
     warn!("Maximum pairing key entry attempts reached, using default value");
-    [0u8; 32] // Default value as fallback
+    panic!("Maximum attempts reached for requesting valid input")
 }
 
 /// Attempts to get a valid pairing index from the user using the provided input function
@@ -262,5 +262,5 @@ where
 
     // If we get here, the user failed all attempts, return a default value
     warn!("Maximum pairing index entry attempts reached, using default value");
-    0 // Default value as fallback
+    panic!("Maximum attempts reached for requesting valid input");
 }

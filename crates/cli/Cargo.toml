@@ -19,6 +19,7 @@ nexum-keycard-signer.workspace = true
 
 ## ui
 clap = { workspace = true, features = ["derive"] }
+colored = "2.0"
 
 ## blockchain
 alloy-primitives = { workspace = true, features = ["hex-compat"] }

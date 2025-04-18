@@ -66,7 +66,7 @@ where
         let address = keycard
             .lock()
             .await
-            .export_key(ExportOption::PublicKeyOnly, &path)
+            .export_key(ExportOption::PublicKeyOnly, path)
             .map_err(|e| alloy_signer::Error::Other(Box::new(e)))?;
         Ok(Address::from_public_key(
             &address

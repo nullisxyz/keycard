@@ -490,7 +490,7 @@ where
             .map_err(|_| Error::InvalidData("Failed to convert data to 32-byte array"))?;
 
         // Create sign command
-        let cmd = SignCommand::with(&data_array, &path)?;
+        let cmd = SignCommand::with(&data_array, path)?;
 
         // Execute the command
         let SignOk::Success { signature } = self.executor.execute_secure(&cmd)?;

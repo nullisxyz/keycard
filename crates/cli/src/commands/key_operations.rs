@@ -60,7 +60,7 @@ pub fn export_key_command(
         );
         println!(
             "Ethereum address: {}",
-            Address::from_public_key(&public_key.into()).to_string()
+            Address::from_public_key(&public_key.into())
         );
     }
 

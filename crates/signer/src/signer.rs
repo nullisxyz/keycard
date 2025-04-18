@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use alloy_consensus::SignableTransaction;
 use alloy_network::{AnyNetwork, EthereumWallet, IntoWallet};
-use alloy_primitives::{Address, B256, ChainId, Signature, address};
+use alloy_primitives::{Address, B256, ChainId, Signature};
 use alloy_signer::{Result, Signer, sign_transaction_with_chain_id};
 use async_trait::async_trait;
+use coins_bip32::path::DerivationPath;
 use nexum_apdu_core::prelude::*;
-use nexum_keycard::{KeyPath, Keycard, KeycardSecureChannel};
+use nexum_keycard::{ExportOption, Keycard, KeycardSecureChannel};
 use tokio::sync::Mutex;
 
 // Temporary remove Debug derive since Keycard doesn't implement Debug
@@ -17,6 +18,7 @@ where
     inner: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>,
     pub(crate) chain_id: Option<ChainId>,
     pub(crate) address: Address,
+    pub(crate) derivation_path: DerivationPath,
 }
 
 impl<T> std::fmt::Debug for KeycardSigner<T>
@@ -26,6 +28,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeycardSigner")
             .field("chain_id", &self.chain_id)
+            .field("derivation_path", &self.derivation_path.derivation_string())
             .field("address", &self.address)
             .finish_non_exhaustive()
     }
@@ -35,13 +38,21 @@ impl<T> KeycardSigner<T>
 where
     T: CardTransport,
 {
-    pub fn new(keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>) -> Self {
-        let address = address!("0xf888b1c80d40c08e53e4f3446ae2dac72fe0f31c");
-        Self {
+    pub async fn new(
+        keycard: Arc<Mutex<Keycard<CardExecutor<KeycardSecureChannel<T>>>>>,
+        path: DerivationPath,
+    ) -> Result<Self> {
+        let address = keycard
+            .lock()
+            .await
+            .export_key(ExportOption::PublicKeyOnly, &path)
+            .map_err(|e| alloy_signer::Error::Other(Box::new(e)))?;
+        Ok(Self {
             inner: keycard,
             chain_id: None,
-            address,
-        }
+            address: Address::from_public_key(&address.public_key().unwrap().into()),
+            derivation_path: path,
+        })
     }
 }
 
@@ -60,7 +71,7 @@ where
             .inner
             .lock()
             .await
-            .sign(data_bytes, KeyPath::Current, false)
+            .sign(data_bytes, &self.derivation_path, false)
             .map_err(|e| alloy_signer::Error::Other(Box::new(e)))?;
 
         Ok(signature)

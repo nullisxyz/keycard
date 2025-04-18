@@ -138,7 +138,7 @@ pub fn get_status_command(
 
 /// Factory reset the card
 pub fn factory_reset_command(transport: PcscTransport) -> Result<(), Box<dyn Error>> {
-    // Initialize keycard with pairing info
+    // Initialize keycard with no pairing info (no secure channel / pairing required for FACTORY RESET)
     let mut keycard = utils::session::initialize_keycard(transport, None)?;
 
     // Factory reset the card

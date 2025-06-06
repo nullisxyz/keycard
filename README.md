@@ -1,5 +1,7 @@
 # nexum-keycard: Rust Implementation for Keycards
 
+**NOTE: This repo is merged and moved into the [nexum](https://github.com/nxm-rs/nexum) repo**
+
 `nexum-keycard` is a comprehensive toolkit for interacting with Keycards - secure smart cards designed for blockchain applications and cryptocurrency key management. This implementation provides a complete solution for Keycard operations in Rust.
 
 [![docs.rs](https://img.shields.io/docsrs/nexum-keycard/latest)](https://docs.rs/nexum-keycard)
